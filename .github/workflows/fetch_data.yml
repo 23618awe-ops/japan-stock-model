@@ -1,0 +1,34 @@
+name: Fetch Japan Stock Data
+
+on:
+  schedule:
+    - cron: "0 1 * * 1"  # 毎週月曜 午前1時(UTC) = 午前10時(JST)
+  workflow_dispatch:       # 手動実行も可能
+
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install requests pandas yfinance
+
+      - name: Fetch data
+        env:
+          EDINET_API_KEY: ${{ secrets.EDINET_API_KEY }}
+        run: python fetch_data.py
+
+      - name: Commit and push results
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add output/
+          git diff --cached --quiet || git commit -m "Auto: update financial data $(date +'%Y-%m-%d')"
+          git push
