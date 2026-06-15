@@ -165,12 +165,21 @@ if __name__ == "__main__":
 
     print(f"書類一覧を検索中: {EDINET_CODE} ({START} ~ {END})")
     docs = find_docs(EDINET_CODE, START, END, doc_type_codes=["120"])
-    print(docs[["docID", "filerName", "docTypeCode", "periodEnd"]].to_string(index=False))
 
-    if not docs.empty:
+    if docs.empty:
+        print("書類が見つかりませんでした。EDINETへの接続を確認してください。")
+    else:
+        print(f"{len(docs)} 件見つかりました")
+        print("カラム:", docs.columns.tolist())
+        # 実際のカラム名に合わせて表示
+        show_cols = [c for c in ["docID", "filerName", "docTypeCode", "periodEnd"] if c in docs.columns]
+        print(docs[show_cols].to_string(index=False))
+
         doc_id = docs.iloc[0]["docID"]
         print(f"\n財務データ取得中: {doc_id}")
         fins = get_financials(doc_id)
+        if not fins:
+            print("財務データが取得できませんでした。")
         for key, df in fins.items():
             print(f"\n--- {key.upper()} ---")
             print(df.head(10).to_string(index=False))
