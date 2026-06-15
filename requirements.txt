@@ -1,2 +1,4 @@
-jquants-api-client
+yfinance
 pandas
+requests
+jquants-api-client
