@@ -1,0 +1,7 @@
+.env
+*.env
+edinet_code_list.csv
+prices_*.csv
+financials_*.csv
+__pycache__/
+*.pyc
