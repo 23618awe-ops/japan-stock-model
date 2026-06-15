@@ -78,15 +78,19 @@ def run(
     edinet_codes: list[str],
     start_date: str,
     end_date: str,
+    ticker_map: dict[str, str] | None = None,
 ):
     """
-    指定したEDINETコードの財務データを期間内で取得してCSV保存
+    指定したEDINETコードの財務データ・株価を取得してCSV保存
 
     Args:
         edinet_codes: ["E02144", "E02362", ...]
         start_date:   "YYYY-MM-DD"
         end_date:     "YYYY-MM-DD"
+        ticker_map:   {"E02144": "7203", ...} EDINETコード→証券コード
     """
+    if ticker_map is None:
+        ticker_map = {}
     print(f"=== 財務データ取得開始 ({start_date} ~ {end_date}) ===")
     print(f"対象銘柄数: {len(edinet_codes)}")
 
@@ -141,25 +145,86 @@ def run(
             out.to_csv(path, index=False, encoding="utf-8-sig")
             print(f"保存: {path} ({len(out)} 行)")
 
-    print("\n=== 株価データ取得 ===")
-    # EDINETコード→証券コードのマッピングがあれば株価も取得
-    codes_csv = load_edinet_codes()
-    if not codes_csv.empty:
-        # カラム名を確認して証券コード列を特定
-        print("EDINETコード一覧のカラム:", codes_csv.columns.tolist())
+    print("\n=== 株価・バリュエーション取得 (yfinance) ===")
+    fetch_prices(ticker_map, start_date, end_date)
+
+
+def fetch_prices(
+    ticker_map: dict[str, str],
+    start_date: str,
+    end_date: str,
+):
+    """
+    株価・時価総額・バリュエーションをyfinanceで取得してCSV保存
+
+    Args:
+        ticker_map: {"E02144": "7203", ...}  EDINETコード→証券コード
+        start_date: "YYYY-MM-DD"
+        end_date:   "YYYY-MM-DD"
+    """
+    prices_all = []
+    valuation_rows = []
+
+    for edinet_code, code in ticker_map.items():
+        ticker_symbol = f"{code}.T"
+        print(f"  {ticker_symbol} ...")
+        try:
+            ticker = yf.Ticker(ticker_symbol)
+
+            # 株価履歴
+            hist = ticker.history(start=start_date, end=end_date, auto_adjust=True)
+            if not hist.empty:
+                hist = hist.reset_index()
+                hist["Date"] = pd.to_datetime(hist["Date"]).dt.tz_localize(None)
+                hist["edinetCode"] = edinet_code
+                hist["code"] = code
+                prices_all.append(hist[["Date", "edinetCode", "code",
+                                        "Open", "High", "Low", "Close", "Volume"]])
+
+            # バリュエーション（最新）
+            info = ticker.info
+            valuation_rows.append({
+                "edinetCode":    edinet_code,
+                "code":          code,
+                "name":          info.get("longName", ""),
+                "marketCap":     info.get("marketCap"),
+                "trailingPE":    info.get("trailingPE"),
+                "forwardPE":     info.get("forwardPE"),
+                "priceToBook":   info.get("priceToBook"),
+                "dividendYield": info.get("dividendYield"),
+                "enterpriseValue": info.get("enterpriseValue"),
+                "EV_EBITDA":     info.get("enterpriseToEbitda"),
+                "fetchedAt":     datetime.now().strftime("%Y-%m-%d"),
+            })
+        except Exception as e:
+            print(f"    [skip] {ticker_symbol}: {e}")
+        time.sleep(0.5)
+
+    if prices_all:
+        df = pd.concat(prices_all, ignore_index=True)
+        path = f"{OUTPUT_DIR}/prices.csv"
+        df.to_csv(path, index=False, encoding="utf-8-sig")
+        print(f"保存: {path} ({len(df)} 行)")
+
+    if valuation_rows:
+        df = pd.DataFrame(valuation_rows)
+        path = f"{OUTPUT_DIR}/valuation.csv"
+        df.to_csv(path, index=False, encoding="utf-8-sig")
+        print(f"保存: {path} ({len(df)} 行)")
+        print(df[["code", "name", "marketCap", "trailingPE", "priceToBook"]].to_string(index=False))
 
 
 if __name__ == "__main__":
-    # ── 取得対象（EDINETコード） ──────────────────────────────────
-    TARGETS = [
-        "E02144",  # トヨタ自動車
-        "E04425",  # ソニーグループ
-        "E01777",  # 三菱UFJフィナンシャル
-        "E02362",  # キーエンス
-        "E02513",  # 任天堂
-    ]
+    # ── EDINETコード → 証券コード のマッピング ───────────────────
+    TICKER_MAP = {
+        "E02144": "7203",  # トヨタ自動車
+        "E04425": "6758",  # ソニーグループ
+        "E01777": "8306",  # 三菱UFJフィナンシャル
+        "E02362": "6861",  # キーエンス
+        "E02513": "7974",  # 任天堂
+    }
 
     START = "2023-04-01"
     END   = "2024-03-31"
 
-    run(TARGETS, START, END)
+    run(list(TICKER_MAP.keys()), START, END, ticker_map=TICKER_MAP)
