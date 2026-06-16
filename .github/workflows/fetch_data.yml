@@ -25,6 +25,9 @@ jobs:
           EDINET_API_KEY: ${{ secrets.EDINET_API_KEY }}
         run: python fetch_data.py
 
+      - name: Compute valuation history
+        run: python compute_valuation.py
+
       - name: Commit and push results
         run: |
           git config user.name  "github-actions[bot]"
