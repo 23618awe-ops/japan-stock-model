@@ -1,0 +1,31 @@
+=== Step1: トヨタの有報を検索 ===
+発見: 2024-06-25 / docID=S100TR7I / トヨタ自動車株式会社 / 2024-03-31
+
+=== Step2: ZIPダウンロード ===
+ZIPサイズ: 197,300 bytes
+ZIPの中身:
+  XBRL_TO_CSV/jpaud-aai-cc-001_E02144-000_2024-03-31_01_2024-06-25.csv  (29,726 bytes)
+  XBRL_TO_CSV/jpaud-aar-cn-001_E02144-000_2024-03-31_01_2024-06-25.csv  (18,056 bytes)
+  XBRL_TO_CSV/jpcrp030000-asr-001_E02144-000_2024-03-31_01_2024-06-25.csv  (1,300,334 bytes)
+
+=== Step3: CSVを読む ===
+CSVサイズ: 1,300,334 bytes
+  読み込み成功: encoding=utf-16, sep=TAB
+行数: 2253, カラム数: 9
+カラム名: ['要素ID', '項目名', 'コンテキストID', '相対年度', '連結・個別', '期間・時点', 'ユニットID', '単位']
+
+先頭3行:
+                                                               要素ID       項目名            コンテキストID   相対年度 連結・個別 期間・時点 ユニットID   単位               値
+0                                   jpdei_cor:NumberOfSubmissionDEI  提出回数、DEI   FilingDateInstant  提出日時点   その他    時点   pure  NaN               1
+1  jpcrp030000-asr_E02144-000:OperatingRevenuesIFRSKeyFinancialData       NaN  Prior4YearDuration    四期前   その他    期間    JPY    円  29866547000000
+2  jpcrp030000-asr_E02144-000:OperatingRevenuesIFRSKeyFinancialData       NaN  Prior3YearDuration    三期前   その他    期間    JPY    円  27214594000000
+
+=== Step4: 主要財務項目 ===
+要素ID列: '要素ID', 値列: '値'
+  売上高     :       12729731000000  (jpcrp_cor:NetSalesSummaryOfBusinessResults)
+  営業利益    :        1670484000000  (jppfs_cor:OperatingIncome)
+  純利益     :        2792942000000  (jpcrp_cor:ProfitLossBeforeTaxIFRSSummaryOfBusinessResults)
+  総資産     :       53972363000000  (jpcrp_cor:TotalAssetsIFRSSummaryOfBusinessResults)
+  純資産     :       12590891000000  (jpcrp_cor:NetAssetsSummaryOfBusinessResults)
+
+=== 完了 ===
