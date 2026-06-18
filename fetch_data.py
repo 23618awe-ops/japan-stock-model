@@ -73,27 +73,67 @@ def fetch_financials(doc_id: str) -> dict[str, pd.DataFrame]:
             print(f"    ZIPにCSVなし: {zf.namelist()[:5]}")
             return {}
 
-        keyword_map = {
-            "bs": ["貸借対照表", "balancesheet", "bs_"],
-            "pl": ["損益計算書", "incomestatement", "pl_", "statement_of_income"],
-            "cf": ["キャッシュ", "cashflow", "cf_"],
-        }
+        # 有価証券報告書(asr)または四半期報告書(q1r/q2r/q3r)のCSVを優先して取得
+        # EDINETのCSVは1ファイルに全財務データがXBRL形式で入っている
+        target = None
+        for name in all_csvs:
+            if "asr-001" in name or "q1r-001" in name or "q2r-001" in name or "q3r-001" in name:
+                target = name
+                break
 
-        result = {}
-        for name, data in all_csvs.items():
-            name_lower = name.lower()
-            for key, keywords in keyword_map.items():
-                if key not in result and any(kw.lower() in name_lower for kw in keywords):
-                    df = _read_csv_from_bytes(data)
-                    if not df.empty:
-                        result[key] = df
-                    break
+        if target is None:
+            print(f"    対象CSVなし。ZIPの中身: {list(all_csvs.keys())[:5]}")
+            return {}
 
-        # キーワードマッチしなかった場合、全CSVをdumpして最初の3件を表示
-        if not result:
-            print(f"    ファイル名でマッチせず。ZIPの中身: {list(all_csvs.keys())[:5]}")
+        df = _read_csv_from_bytes(all_csvs[target])
+        if df.empty:
+            return {}
 
-        return result
+        return _parse_xbrl_csv(df)
+
+
+def _parse_xbrl_csv(df: pd.DataFrame) -> dict[str, pd.DataFrame]:
+    """
+    EDINETのXBRL CSVを BS / PL / CF に分けて返す
+
+    EDINET CSVの構造（縦持ち）:
+        要素ID, コンテキストID, 相対年度, 連結・個別, 期間・時点, ユニットID, 値, ...
+    """
+    # カラム名を確認して正規化
+    df.columns = df.columns.str.strip()
+
+    # 値列と要素ID列を特定
+    id_col  = next((c for c in df.columns if "要素" in c or "element" in c.lower()), df.columns[0])
+    val_col = next((c for c in df.columns if "値" in c or c.lower() in ("value", "amount")), None)
+
+    if val_col is None or id_col is None:
+        return {}
+
+    # BS/PL/CF に関連するキーワード
+    bs_keys = ["TotalAssets", "NetAssets", "TotalLiabilities", "Equity",
+               "CashAndDeposits", "TotalLiabilitiesAndNetAssets",
+               "総資産", "純資産", "負債", "現金"]
+    pl_keys = ["NetSales", "OperatingIncome", "OrdinaryIncome", "ProfitLoss",
+               "NetIncome", "売上", "営業利益", "経常", "純利益", "EPS",
+               "EarningsPerShare", "SharesOutstanding"]
+    cf_keys = ["CashFlowFrom", "CashAndCashEquivalents", "キャッシュ", "CF"]
+
+    def match(element: str, keys: list) -> bool:
+        return any(k.lower() in str(element).lower() for k in keys)
+
+    bs_rows = df[df[id_col].apply(lambda x: match(x, bs_keys))]
+    pl_rows = df[df[id_col].apply(lambda x: match(x, pl_keys))]
+    cf_rows = df[df[id_col].apply(lambda x: match(x, cf_keys))]
+
+    result = {}
+    if not bs_rows.empty:
+        result["bs"] = bs_rows.reset_index(drop=True)
+    if not pl_rows.empty:
+        result["pl"] = pl_rows.reset_index(drop=True)
+    if not cf_rows.empty:
+        result["cf"] = cf_rows.reset_index(drop=True)
+
+    return result
     except Exception as e:
         print(f"  [skip] 財務取得失敗 {doc_id}: {e}")
         return {}
