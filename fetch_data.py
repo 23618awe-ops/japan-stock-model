@@ -255,7 +255,7 @@ if __name__ == "__main__":
         "E02513": "7974",  # 任天堂
     }
 
-    START = "2015-01-01"
+    START = "2024-01-01"
     END   = "2024-12-31"
 
     run(list(TICKER_MAP.keys()), START, END, ticker_map=TICKER_MAP)
