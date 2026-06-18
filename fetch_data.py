@@ -38,11 +38,14 @@ def fetch_doc_list(date: str) -> list:
 
 
 def _read_csv_from_bytes(data: bytes) -> pd.DataFrame:
-    for enc in ("utf-8-sig", "cp932", "utf-8"):
-        try:
-            return pd.read_csv(io.BytesIO(data), encoding=enc)
-        except Exception:
-            continue
+    for enc in ("utf-16", "utf-16-le", "utf-8-sig", "cp932", "utf-8"):
+        for sep in ("\t", ","):
+            try:
+                df = pd.read_csv(io.BytesIO(data), encoding=enc, sep=sep, on_bad_lines="skip", low_memory=False)
+                if len(df.columns) >= 2:
+                    return df
+            except Exception:
+                continue
     return pd.DataFrame()
 
 

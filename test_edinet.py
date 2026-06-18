@@ -14,8 +14,8 @@ def get(url, params, stream=False):
 
 def read_csv_robust(data: bytes) -> pd.DataFrame:
     """あらゆるエンコード・形式に対応してCSVを読む"""
-    for enc in ("utf-8-sig", "utf-8", "cp932", "shift_jis"):
-        for sep in (",", "\t"):
+    for enc in ("utf-16", "utf-16-le", "utf-8-sig", "utf-8", "cp932"):
+        for sep in ("\t", ","):
             try:
                 df = pd.read_csv(
                     io.BytesIO(data),
