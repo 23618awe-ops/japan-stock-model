@@ -76,8 +76,6 @@ def fetch_financials(doc_id: str) -> dict[str, pd.DataFrame]:
             print(f"    ZIPにCSVなし: {zf.namelist()[:5]}")
             return {}
 
-        # 有価証券報告書(asr)または四半期報告書(q1r/q2r/q3r)のCSVを優先して取得
-        # EDINETのCSVは1ファイルに全財務データがXBRL形式で入っている
         target = None
         for name in all_csvs:
             if "asr-001" in name or "q1r-001" in name or "q2r-001" in name or "q3r-001" in name:
@@ -93,26 +91,21 @@ def fetch_financials(doc_id: str) -> dict[str, pd.DataFrame]:
             return {}
 
         return _parse_xbrl_csv(df)
+    except Exception as e:
+        print(f"  [skip] 財務取得失敗 {doc_id}: {e}")
+        return {}
 
 
 def _parse_xbrl_csv(df: pd.DataFrame) -> dict[str, pd.DataFrame]:
-    """
-    EDINETのXBRL CSVを BS / PL / CF に分けて返す
-
-    EDINET CSVの構造（縦持ち）:
-        要素ID, コンテキストID, 相対年度, 連結・個別, 期間・時点, ユニットID, 値, ...
-    """
-    # カラム名を確認して正規化
+    """EDINETのXBRL CSVを BS / PL / CF に分けて返す"""
     df.columns = df.columns.str.strip()
 
-    # 値列と要素ID列を特定
     id_col  = next((c for c in df.columns if "要素" in c or "element" in c.lower()), df.columns[0])
     val_col = next((c for c in df.columns if "値" in c or c.lower() in ("value", "amount")), None)
 
     if val_col is None or id_col is None:
         return {}
 
-    # BS/PL/CF に関連するキーワード
     bs_keys = ["TotalAssets", "NetAssets", "TotalLiabilities", "Equity",
                "CashAndDeposits", "TotalLiabilitiesAndNetAssets",
                "総資産", "純資産", "負債", "現金"]
@@ -137,9 +130,6 @@ def _parse_xbrl_csv(df: pd.DataFrame) -> dict[str, pd.DataFrame]:
         result["cf"] = cf_rows.reset_index(drop=True)
 
     return result
-    except Exception as e:
-        print(f"  [skip] 財務取得失敗 {doc_id}: {e}")
-        return {}
 
 
 def load_edinet_codes(csv_path="data/edinet_code_list.csv") -> pd.DataFrame:

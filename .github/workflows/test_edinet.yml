@@ -17,7 +17,9 @@ jobs:
       - name: Run test
         env:
           EDINET_API_KEY: ${{ secrets.EDINET_API_KEY }}
-        run: python test_edinet.py 2>&1 | tee output/test_result.txt
+        run: |
+          mkdir -p output
+          python test_edinet.py 2>&1 | tee output/test_result.txt
       - run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
