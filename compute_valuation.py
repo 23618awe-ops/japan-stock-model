@@ -32,8 +32,12 @@ def load_prices() -> pd.DataFrame:
 
 
 def load_financials() -> tuple[pd.DataFrame, pd.DataFrame]:
-    bs = pd.read_csv(f"{OUTPUT_DIR}/bs.csv")
-    pl = pd.read_csv(f"{OUTPUT_DIR}/pl.csv")
+    bs_path = f"{OUTPUT_DIR}/bs.csv"
+    pl_path = f"{OUTPUT_DIR}/pl.csv"
+    bs = pd.read_csv(bs_path) if os.path.exists(bs_path) else pd.DataFrame()
+    pl = pd.read_csv(pl_path) if os.path.exists(pl_path) else pd.DataFrame()
+    if bs.empty:
+        print(f"  警告: {bs_path} が見つかりません（EDINETの財務データ取得を確認）")
     return bs, pl
 
 
@@ -207,6 +211,11 @@ def run():
     print("財務データ読み込み中...")
     bs, pl = load_financials()
     print(f"  BS: {len(bs):,} 行 / PL: {len(pl):,} 行")
+
+    if bs.empty and pl.empty:
+        print("財務データなし。株価データのみ保存します。")
+        prices.to_csv(f"{OUTPUT_DIR}/valuation_history.csv", index=False, encoding="utf-8-sig")
+        return
 
     print("財務指標を抽出中...")
     bs_metrics = extract_bs_metrics(bs)

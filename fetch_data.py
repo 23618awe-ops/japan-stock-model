@@ -37,28 +37,62 @@ def fetch_doc_list(date: str) -> list:
         return []
 
 
+def _read_csv_from_bytes(data: bytes) -> pd.DataFrame:
+    for enc in ("utf-8-sig", "cp932", "utf-8"):
+        try:
+            return pd.read_csv(io.BytesIO(data), encoding=enc)
+        except Exception:
+            continue
+    return pd.DataFrame()
+
+
+def _extract_csvs(zf: zipfile.ZipFile) -> dict[str, bytes]:
+    """ZIPから全CSVを取得（ネストZIPも対応）"""
+    csvs = {}
+    for name in zf.namelist():
+        if name.endswith(".csv"):
+            csvs[name] = zf.read(name)
+        elif name.endswith(".zip"):
+            try:
+                inner = zipfile.ZipFile(io.BytesIO(zf.read(name)))
+                for inner_name in inner.namelist():
+                    if inner_name.endswith(".csv"):
+                        csvs[inner_name] = inner.read(inner_name)
+            except Exception:
+                pass
+    return csvs
+
+
 def fetch_financials(doc_id: str) -> dict[str, pd.DataFrame]:
     try:
         r = edinet_get(f"{EDINET_BASE}/documents/{doc_id}", {"type": 5}, stream=True)
         zf = zipfile.ZipFile(io.BytesIO(r.content))
-        result = {}
+        all_csvs = _extract_csvs(zf)
+
+        if not all_csvs:
+            print(f"    ZIPにCSVなし: {zf.namelist()[:5]}")
+            return {}
+
         keyword_map = {
-            "bs": ["貸借対照表", "BalanceSheet"],
-            "pl": ["損益計算書", "IncomeStatement"],
-            "cf": ["キャッシュ", "CashFlow"],
+            "bs": ["貸借対照表", "balancesheet", "bs_"],
+            "pl": ["損益計算書", "incomestatement", "pl_", "statement_of_income"],
+            "cf": ["キャッシュ", "cashflow", "cf_"],
         }
-        for name in zf.namelist():
-            if not name.endswith(".csv"):
-                continue
+
+        result = {}
+        for name, data in all_csvs.items():
+            name_lower = name.lower()
             for key, keywords in keyword_map.items():
-                if any(kw.lower() in name.lower() for kw in keywords):
-                    with zf.open(name) as f:
-                        try:
-                            df = pd.read_csv(f, encoding="utf-8-sig")
-                        except UnicodeDecodeError:
-                            df = pd.read_csv(f, encoding="cp932")
-                    result[key] = df
+                if key not in result and any(kw.lower() in name_lower for kw in keywords):
+                    df = _read_csv_from_bytes(data)
+                    if not df.empty:
+                        result[key] = df
                     break
+
+        # キーワードマッチしなかった場合、全CSVをdumpして最初の3件を表示
+        if not result:
+            print(f"    ファイル名でマッチせず。ZIPの中身: {list(all_csvs.keys())[:5]}")
+
         return result
     except Exception as e:
         print(f"  [skip] 財務取得失敗 {doc_id}: {e}")
