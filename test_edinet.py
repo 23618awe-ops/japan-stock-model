@@ -43,12 +43,18 @@ if not target:
     exit()
 
 print(f"\n=== Step3: CSVを読む ({target}) ===")
+df = None
 for enc in ("utf-8-sig", "cp932", "utf-8"):
     try:
         df = pd.read_csv(io.BytesIO(zf.read(target)), encoding=enc)
+        print(f"  エンコード成功: {enc}")
         break
-    except Exception:
-        continue
+    except Exception as e:
+        print(f"  {enc} 失敗: {e}")
+
+if df is None:
+    print("CSVの読み込みに失敗しました")
+    exit()
 
 print(f"行数: {len(df)}, カラム: {df.columns.tolist()[:5]}")
 print(df.head(3).to_string())
