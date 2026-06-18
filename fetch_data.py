@@ -88,48 +88,18 @@ def fetch_financials(doc_id: str) -> dict[str, pd.DataFrame]:
 
         df = _read_csv_from_bytes(all_csvs[target])
         if df.empty:
-            return {}
+            return pd.DataFrame()
 
         return _parse_xbrl_csv(df)
     except Exception as e:
         print(f"  [skip] 財務取得失敗 {doc_id}: {e}")
-        return {}
+        return pd.DataFrame()
 
 
-def _parse_xbrl_csv(df: pd.DataFrame) -> dict[str, pd.DataFrame]:
-    """EDINETのXBRL CSVを BS / PL / CF に分けて返す"""
+def _parse_xbrl_csv(df: pd.DataFrame) -> pd.DataFrame:
+    """EDINETのXBRL CSVを正規化して全項目返す"""
     df.columns = df.columns.str.strip()
-
-    id_col  = next((c for c in df.columns if "要素" in c or "element" in c.lower()), df.columns[0])
-    val_col = next((c for c in df.columns if "値" in c or c.lower() in ("value", "amount")), None)
-
-    if val_col is None or id_col is None:
-        return {}
-
-    bs_keys = ["TotalAssets", "NetAssets", "TotalLiabilities", "Equity",
-               "CashAndDeposits", "TotalLiabilitiesAndNetAssets",
-               "総資産", "純資産", "負債", "現金"]
-    pl_keys = ["NetSales", "OperatingIncome", "OrdinaryIncome", "ProfitLoss",
-               "NetIncome", "売上", "営業利益", "経常", "純利益", "EPS",
-               "EarningsPerShare", "SharesOutstanding"]
-    cf_keys = ["CashFlowFrom", "CashAndCashEquivalents", "キャッシュ", "CF"]
-
-    def match(element: str, keys: list) -> bool:
-        return any(k.lower() in str(element).lower() for k in keys)
-
-    bs_rows = df[df[id_col].apply(lambda x: match(x, bs_keys))]
-    pl_rows = df[df[id_col].apply(lambda x: match(x, pl_keys))]
-    cf_rows = df[df[id_col].apply(lambda x: match(x, cf_keys))]
-
-    result = {}
-    if not bs_rows.empty:
-        result["bs"] = bs_rows.reset_index(drop=True)
-    if not pl_rows.empty:
-        result["pl"] = pl_rows.reset_index(drop=True)
-    if not cf_rows.empty:
-        result["cf"] = cf_rows.reset_index(drop=True)
-
-    return result
+    return df.reset_index(drop=True)
 
 
 def load_edinet_codes(csv_path="data/edinet_code_list.csv") -> pd.DataFrame:
@@ -182,7 +152,7 @@ def run(
     print(f"\n合計 {len(all_docs)} 件の書類を発見")
 
     # 財務データを取得
-    bs_all, pl_all, cf_all = [], [], []
+    fin_all = []
     for doc in all_docs:
         doc_id   = doc["docID"]
         edinet_c = doc.get("edinetCode", "")
@@ -190,27 +160,21 @@ def run(
         period   = doc.get("periodEnd", "")
         print(f"  取得中: {filer} ({period}) ...")
 
-        fins = fetch_financials(doc_id)
-        for key, df in fins.items():
+        df = fetch_financials(doc_id)
+        if not df.empty:
             df["edinetCode"] = edinet_c
             df["filerName"]  = filer
             df["periodEnd"]  = period
             df["docID"]      = doc_id
-            if key == "bs":
-                bs_all.append(df)
-            elif key == "pl":
-                pl_all.append(df)
-            elif key == "cf":
-                cf_all.append(df)
+            fin_all.append(df)
         time.sleep(0.3)
 
     # CSV保存
-    for name, rows in [("bs", bs_all), ("pl", pl_all), ("cf", cf_all)]:
-        if rows:
-            out = pd.concat(rows, ignore_index=True)
-            path = f"{OUTPUT_DIR}/{name}.csv"
-            out.to_csv(path, index=False, encoding="utf-8-sig")
-            print(f"保存: {path} ({len(out)} 行)")
+    if fin_all:
+        out = pd.concat(fin_all, ignore_index=True)
+        path = f"{OUTPUT_DIR}/financials.csv"
+        out.to_csv(path, index=False, encoding="utf-8-sig")
+        print(f"保存: {path} ({len(out)} 行)")
 
     print("\n=== 株価・バリュエーション取得 (yfinance) ===")
     fetch_prices(ticker_map, start_date, end_date)
