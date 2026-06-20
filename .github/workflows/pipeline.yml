@@ -102,6 +102,7 @@ for label, mask in [('train(≤2022)', df['年度_num'] <= 2022), ('val(2023)', 
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add output/features.csv \
+                  output/irbank_features.csv \
                   output/feature_importance.csv \
                   output/backtest_result.csv \
                   output/backtest_summary.csv \
