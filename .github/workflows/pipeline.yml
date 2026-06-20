@@ -1,0 +1,68 @@
+name: Japan Stock ML Pipeline
+
+on:
+  schedule:
+    - cron: "0 2 * * 1"   # 毎週月曜 2:00 UTC (JST 11:00)
+  workflow_dispatch:
+    inputs:
+      skip_download:
+        description: "データダウンロードをスキップ (キャッシュがある場合)"
+        required: false
+        default: "false"
+      signals_only:
+        description: "シグナル生成のみ実行"
+        required: false
+        default: "false"
+
+jobs:
+  pipeline:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          pip install -q requests pandas numpy lightgbm scikit-learn openpyxl
+
+      - name: Cache output data
+        uses: actions/cache@v4
+        with:
+          path: output/gyoseki_price_完全版.csv
+          key: gdrive-price-${{ hashFiles('pipeline/download_data.py') }}
+
+      - name: Run pipeline
+        env:
+          GDRIVE_PRICE_FILE_ID: ${{ secrets.GDRIVE_PRICE_FILE_ID }}
+          GDRIVE_IRBANK_FILE_ID: ${{ secrets.GDRIVE_IRBANK_FILE_ID }}
+        run: |
+          mkdir -p output
+          if [ "${{ github.event.inputs.signals_only }}" = "true" ]; then
+            python run_pipeline.py --signals-only
+          elif [ "${{ github.event.inputs.skip_download }}" = "true" ]; then
+            python run_pipeline.py --skip-download
+          else
+            python run_pipeline.py
+          fi
+
+      - name: Commit and push results
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add output/features.csv \
+                  output/feature_importance.csv \
+                  output/backtest_result.csv \
+                  output/backtest_summary.csv \
+                  output/backtest_monthly.csv \
+                  output/signals.csv \
+                  2>/dev/null || true
+          git diff --cached --quiet || git commit -m "Auto: ML pipeline run $(date +'%Y-%m-%d')"
+          git push || true
