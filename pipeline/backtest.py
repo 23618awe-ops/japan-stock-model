@@ -30,6 +30,11 @@ def run():
     print("データ読み込み中...")
     df = pd.read_csv(feat_path, encoding="utf-8-sig", low_memory=False)
 
+    # train_model と同様に _四半期_num を追加
+    if "_四半期" in df.columns and "_四半期_num" not in df.columns:
+        quarter_map = {"1Q": 1, "2Q": 2, "3Q": 3, "通期": 4}
+        df["_四半期_num"] = df["_四半期"].map(quarter_map)
+
     print("モデル読み込み中...")
     with open(MODEL_PATH, "rb") as f:
         payload = pickle.load(f)
