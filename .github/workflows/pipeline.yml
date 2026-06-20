@@ -37,8 +37,8 @@ jobs:
         uses: actions/cache@v4
         with:
           path: |
-            output/price_clean_valuation.csv
-            output/irbank_pl.xlsx
+            ${{ github.workspace }}/output/price_clean_valuation.csv
+            ${{ github.workspace }}/output/irbank_pl.xlsx
           key: gdrive-data-${{ secrets.GDRIVE_PRICE_FILE_ID }}-${{ secrets.GDRIVE_IRBANK_FILE_ID }}
 
       - name: Run pipeline
@@ -67,4 +67,5 @@ jobs:
                   output/signals.csv \
                   2>/dev/null || true
           git diff --cached --quiet || git commit -m "Auto: ML pipeline run $(date +'%Y-%m-%d')"
-          git push || true
+          git pull --rebase origin main || true
+          git push origin main || true
