@@ -486,7 +486,16 @@ def run(input_path: str = INPUT_PATH, output_path: str = OUTPUT_PATH):
         return
 
     print(f"データ読み込み: {input_path}")
-    df = load_csv(input_path)
+    ext = os.path.splitext(input_path)[1].lower()
+    if ext in (".xlsx", ".xls"):
+        df = pd.read_excel(input_path, dtype=str)
+        df.columns = [
+            __import__("unicodedata").normalize("NFKC", c).replace(" ", "").replace("　", "").strip()
+            for c in df.columns
+        ]
+        print(f"  読み込み完了: {len(df):,} 行 × {len(df.columns)} 列")
+    else:
+        df = load_csv(input_path)
 
     print("前処理中...")
     df = preprocess(df)
