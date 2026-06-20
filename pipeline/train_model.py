@@ -75,23 +75,23 @@ FEATURE_COLS = [
     "最終調整寄与",
 ]
 
-TARGET_COL = "target_5d_up5pct"
+TARGET_COL = "target_20d_up20pct"
 
 
 def build_target(df: pd.DataFrame) -> pd.DataFrame:
-    """post_5d (5営業日後株価) / pre_close で5%超騰落を目的変数に"""
-    # 株価カラムがあれば利用
-    if "post_5d" in df.columns and "pre_close" in df.columns:
+    """post_20d (20営業日後株価) / pre_close で20%超上昇を目的変数に"""
+    if "post_20d" in df.columns and "pre_close" in df.columns:
+        ret = (df["post_20d"] / df["pre_close"].replace(0, np.nan) - 1)
+    elif "post_5d" in df.columns and "pre_close" in df.columns:
+        print("  [warning] post_20d が見つかりません。post_5d で代用します。")
         ret = (df["post_5d"] / df["pre_close"].replace(0, np.nan) - 1)
-    elif "T_post_5d" in df.columns and "T_pre_close" in df.columns:
-        ret = (df["T_post_5d"] / df["T_pre_close"].replace(0, np.nan) - 1)
     else:
-        print("  [warning] 株価列(post_5d/pre_close)が見つかりません。ダミー目的変数を使用。")
+        print("  [warning] 株価列が見つかりません。ダミー目的変数を使用。")
         np.random.seed(42)
-        df[TARGET_COL] = (np.random.rand(len(df)) > 0.8).astype(int)
+        df[TARGET_COL] = (np.random.rand(len(df)) > 0.95).astype(int)
         return df
 
-    df[TARGET_COL] = (ret >= 0.05).astype(int)
+    df[TARGET_COL] = (ret >= 0.20).astype(int)
     print(f"  目的変数分布: {df[TARGET_COL].value_counts().to_dict()}")
     return df
 

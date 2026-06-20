@@ -141,8 +141,9 @@ def build_event_prices(irbank: pd.DataFrame, price: pd.DataFrame, col_map: dict)
     irbank["提出日"] = pd.to_datetime(irbank["提出日"], errors="coerce")
     irbank["コード4"] = irbank["コード"].astype(str).str.strip().str.extract(r"(\d{4})", expand=False)
 
-    pre_rows   = []
-    post5_rows = []
+    pre_rows    = []
+    post5_rows  = []
+    post20_rows = []
 
     for code, grp in price.groupby(cn):
         grp = grp.sort_values(dn).reset_index(drop=True)
@@ -176,11 +177,18 @@ def build_event_prices(irbank: pd.DataFrame, price: pd.DataFrame, col_map: dict)
             if pos5 < len(trading_days):
                 post5_rows.append({"_irbank_idx": idx, "post_5d": closes[pos5]})
 
-    pre_df  = pd.DataFrame(pre_rows).set_index("_irbank_idx")
-    post_df = pd.DataFrame(post5_rows).set_index("_irbank_idx")
+            # +20営業日
+            pos20 = pos + 20
+            if pos20 < len(trading_days):
+                post20_rows.append({"_irbank_idx": idx, "post_20d": closes[pos20]})
 
-    irbank = irbank.join(pre_df,  how="left")
-    irbank = irbank.join(post_df, how="left")
+    pre_df   = pd.DataFrame(pre_rows).set_index("_irbank_idx")
+    post_df  = pd.DataFrame(post5_rows).set_index("_irbank_idx")
+    post20_df = pd.DataFrame(post20_rows).set_index("_irbank_idx")
+
+    irbank = irbank.join(pre_df,   how="left")
+    irbank = irbank.join(post_df,  how="left")
+    irbank = irbank.join(post20_df, how="left")
     irbank = irbank.drop(columns=["コード4"])
     return irbank
 

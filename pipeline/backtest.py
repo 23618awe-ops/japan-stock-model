@@ -45,8 +45,10 @@ def run():
     df["score"] = model.predict_proba(X)[:, 1]
     df["signal"] = (df["score"] >= THRESHOLD).astype(int)
 
-    # リターン計算
-    if "post_5d" in df.columns and "pre_close" in df.columns:
+    # リターン計算（20営業日後を優先）
+    if "post_20d" in df.columns and "pre_close" in df.columns:
+        df["actual_return"] = df["post_20d"] / df["pre_close"].replace(0, np.nan) - 1
+    elif "post_5d" in df.columns and "pre_close" in df.columns:
         df["actual_return"] = df["post_5d"] / df["pre_close"].replace(0, np.nan) - 1
     elif "T_post_5d" in df.columns and "T_pre_close" in df.columns:
         df["actual_return"] = df["T_post_5d"] / df["T_pre_close"].replace(0, np.nan) - 1
