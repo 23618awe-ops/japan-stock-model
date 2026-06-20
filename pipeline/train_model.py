@@ -75,11 +75,11 @@ FEATURE_COLS = [
     "最終調整寄与",
 ]
 
-TARGET_COL = "target_20d_up20pct"
+TARGET_COL = "target_20d_up10pct"
 
 
 def build_target(df: pd.DataFrame) -> pd.DataFrame:
-    """post_20d (20営業日後株価) / pre_close で20%超上昇を目的変数に"""
+    """post_20d (20営業日後株価) / pre_close で10%超上昇を目的変数に"""
     if "post_20d" in df.columns and "pre_close" in df.columns:
         ret = (df["post_20d"] / df["pre_close"].replace(0, np.nan) - 1)
     elif "post_5d" in df.columns and "pre_close" in df.columns:
@@ -91,7 +91,7 @@ def build_target(df: pd.DataFrame) -> pd.DataFrame:
         df[TARGET_COL] = (np.random.rand(len(df)) > 0.95).astype(int)
         return df
 
-    df[TARGET_COL] = (ret >= 0.20).astype(int)
+    df[TARGET_COL] = (ret >= 0.10).astype(int)
     print(f"  目的変数分布: {df[TARGET_COL].value_counts().to_dict()}")
     return df
 
