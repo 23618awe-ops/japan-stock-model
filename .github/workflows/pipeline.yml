@@ -41,19 +41,40 @@ jobs:
             ${{ github.workspace }}/output/irbank_pl.xlsx
           key: gdrive-data-${{ secrets.GDRIVE_PRICE_FILE_ID }}-${{ secrets.GDRIVE_IRBANK_FILE_ID }}
 
-      - name: Run pipeline
+      - name: Step 1 - データダウンロード
+        if: ${{ github.event.inputs.signals_only != 'true' && github.event.inputs.skip_download != 'true' }}
         env:
           GDRIVE_PRICE_FILE_ID: ${{ secrets.GDRIVE_PRICE_FILE_ID }}
           GDRIVE_IRBANK_FILE_ID: ${{ secrets.GDRIVE_IRBANK_FILE_ID }}
         run: |
           mkdir -p output
-          if [ "${{ github.event.inputs.signals_only }}" = "true" ]; then
-            python run_pipeline.py --signals-only
-          elif [ "${{ github.event.inputs.skip_download }}" = "true" ]; then
-            python run_pipeline.py --skip-download
-          else
-            python run_pipeline.py
-          fi
+          python -c "from pipeline import download_data; download_data.run()"
+
+      - name: Step 2 - 特徴量エンジニアリング (irbank)
+        if: ${{ github.event.inputs.signals_only != 'true' }}
+        run: |
+          mkdir -p output
+          python -c "from pipeline import feature_engineering; feature_engineering.run()"
+
+      - name: Step 3 - 特徴量マージ (irbank × 株価)
+        if: ${{ github.event.inputs.signals_only != 'true' }}
+        run: |
+          python -c "from pipeline import merge_features; merge_features.run()"
+
+      - name: Step 4 - モデルトレーニング (LightGBM)
+        if: ${{ github.event.inputs.signals_only != 'true' }}
+        run: |
+          python -c "from pipeline import train_model; train_model.run()"
+
+      - name: Step 5 - バックテスト
+        if: ${{ github.event.inputs.signals_only != 'true' }}
+        run: |
+          python -c "from pipeline import backtest; backtest.run()"
+
+      - name: Step 6 - シグナル生成
+        run: |
+          mkdir -p output
+          python -c "from pipeline import generate_signals; generate_signals.run()"
 
       - name: Commit and push results
         run: |
