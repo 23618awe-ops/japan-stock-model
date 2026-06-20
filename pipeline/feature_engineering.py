@@ -47,6 +47,11 @@ def preprocess(df: pd.DataFrame) -> pd.DataFrame:
 
     df = df.rename(columns={"T_EPS_g": "EPS", "T_SPS_g": "SPS", "T_発行済株式数_推定": "株式数_推定"})
 
+    # 列が存在しない場合はNaNで初期化
+    for _c in ["EPS", "SPS", "株式数_推定"]:
+        if _c not in df.columns:
+            df[_c] = np.nan
+
     num_cols = ["売上高", "営業利益", "経常利益", "当期純利益", "EPS", "SPS", "株式数_推定"]
     for col in num_cols:
         if col in df.columns:
