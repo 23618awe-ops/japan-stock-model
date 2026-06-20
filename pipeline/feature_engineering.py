@@ -74,16 +74,24 @@ def preprocess(df: pd.DataFrame) -> pd.DataFrame:
 
 # ── 基本指標 ──────────────────────────────────────────────────────────────
 def calc_base_metrics(df: pd.DataFrame) -> pd.DataFrame:
-    valid_shares = df["株式数_推定"].notna() & (df["株式数_推定"] != 0)
-    df["一株営業利益"] = np.where(valid_shares, df["営業利益"] * 1e6 / df["株式数_推定"], np.nan)
-    df["営業利益率"]   = np.where(df["売上高"].replace(0, np.nan).notna(), df["営業利益"] / df["売上高"], np.nan)
-    df["コスト率"]     = np.where(df["売上高"].replace(0, np.nan).notna(), (df["売上高"] - df["営業利益"]) / df["売上高"], np.nan)
-    df["営業外寄与"]   = np.where(df["売上高"].replace(0, np.nan).notna(), (df["経常利益"] - df["営業利益"]) / df["売上高"], np.nan)
-    df["最終調整寄与"] = np.where(df["売上高"].replace(0, np.nan).notna(), (df["当期純利益"] - df["経常利益"]) / df["売上高"], np.nan)
+    rev = df["売上高"].replace(0, np.nan)
+    df["営業利益率"]   = np.where(rev.notna(), df["営業利益"] / rev, np.nan)
+    df["コスト率"]     = np.where(rev.notna(), (df["売上高"] - df["営業利益"]) / rev, np.nan)
+    df["営業外寄与"]   = np.where(rev.notna(), (df["経常利益"] - df["営業利益"]) / rev, np.nan)
+    df["最終調整寄与"] = np.where(rev.notna(), (df["当期純利益"] - df["経常利益"]) / rev, np.nan)
+    df["純利益率"]     = np.where(rev.notna(), df["当期純利益"] / rev, np.nan)
 
-    is_actual = df["区分"].str.contains("実績", na=False)
-    df["EPS_実績"] = np.where(is_actual & valid_shares, df["当期純利益"] * 1e6 / df["株式数_推定"], np.nan)
-    df["SPS_実績"] = np.where(is_actual & valid_shares, df["売上高"]     * 1e6 / df["株式数_推定"], np.nan)
+    # 株式数推定がある場合のみ計算（列が存在しない場合はスキップ）
+    if "株式数_推定" in df.columns:
+        valid_shares = df["株式数_推定"].notna() & (df["株式数_推定"] != 0)
+        df["一株営業利益"] = np.where(valid_shares, df["営業利益"] * 1e6 / df["株式数_推定"], np.nan)
+        is_actual = df["区分"].str.contains("実績", na=False)
+        df["EPS_実績"] = np.where(is_actual & valid_shares, df["当期純利益"] * 1e6 / df["株式数_推定"], np.nan)
+        df["SPS_実績"] = np.where(is_actual & valid_shares, df["売上高"]     * 1e6 / df["株式数_推定"], np.nan)
+    else:
+        df["一株営業利益"] = np.nan
+        df["EPS_実績"]    = np.nan
+        df["SPS_実績"]    = np.nan
     return df
 
 
