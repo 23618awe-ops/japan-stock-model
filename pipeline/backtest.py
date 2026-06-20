@@ -79,7 +79,7 @@ def run():
             "avg_return": r.mean(),
             "median_return": r.median(),
             "win_rate":   (r > 0).mean(),
-            "up5pct_rate": (r >= 0.05).mean(),
+            "up10pct_rate": (r >= 0.10).mean(),
             "sharpe":     r.mean() / r.std() if r.std() > 0 else np.nan,
             "max":        r.max(),
             "min":        r.min(),
