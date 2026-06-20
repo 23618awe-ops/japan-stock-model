@@ -481,8 +481,10 @@ def assemble(df: pd.DataFrame, df_actual: pd.DataFrame) -> pd.DataFrame:
     if guidance_rikai_cols:
         df_rikai = df_guidance[["コード", "年度_num", "修正回数"] + guidance_rikai_cols].copy()
         df_rikai["年度_num"] = df_rikai["年度_num"] + 1
-        df_rikai = df_rikai.drop_duplicates(subset=["コード", "年度_num", "修正回数"], keep="last")
-        df_actual_only = df_actual_only.merge(df_rikai, on=["コード", "年度_num", "修正回数"], how="left")
+        # 修正回数に関わらず前年の最新修正（最大修正回数）を使う
+        df_rikai = df_rikai.sort_values("修正回数").drop_duplicates(subset=["コード", "年度_num"], keep="last")
+        df_rikai = df_rikai.drop(columns=["修正回数"])
+        df_actual_only = df_actual_only.merge(df_rikai, on=["コード", "年度_num"], how="left")
 
     df_actual_only = df_actual_only.drop(columns=[c for c in df_actual_only.columns if c.endswith("_k")], errors="ignore")
 
