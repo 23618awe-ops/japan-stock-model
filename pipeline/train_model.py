@@ -100,9 +100,6 @@ QUARTER_MAP = {"1Q": 1, "2Q": 2, "3Q": 3, "通期": 4}
 
 
 def select_features(df: pd.DataFrame) -> list[str]:
-    # _四半期を数値化してFEATURE_COLSに追加
-    if "_四半期" in df.columns:
-        df["_四半期_num"] = df["_四半期"].map(QUARTER_MAP)
     available = [c for c in FEATURE_COLS if c in df.columns]
     if "_四半期_num" in df.columns:
         available = ["_四半期_num"] + available
@@ -116,6 +113,11 @@ def train(df: pd.DataFrame):
         return
 
     df = build_target(df)
+
+    # _四半期_num をスプリット前に追加（スライス後に追加すると反映されないため）
+    if "_四半期" in df.columns:
+        df = df.copy()
+        df["_四半期_num"] = df["_四半期"].map(QUARTER_MAP)
 
     # 時系列split: train<=2022, val=2023, test>=2024
     if "年度_num" in df.columns:
