@@ -96,9 +96,17 @@ def build_target(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+QUARTER_MAP = {"1Q": 1, "2Q": 2, "3Q": 3, "通期": 4}
+
+
 def select_features(df: pd.DataFrame) -> list[str]:
+    # _四半期を数値化してFEATURE_COLSに追加
+    if "_四半期" in df.columns:
+        df["_四半期_num"] = df["_四半期"].map(QUARTER_MAP)
     available = [c for c in FEATURE_COLS if c in df.columns]
-    print(f"  利用可能な特徴量: {len(available)} / {len(FEATURE_COLS)}")
+    if "_四半期_num" in df.columns:
+        available = ["_四半期_num"] + available
+    print(f"  利用可能な特徴量: {len(available)} / {len(FEATURE_COLS) + 1}")
     return available
 
 
