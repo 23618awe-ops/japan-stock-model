@@ -14,7 +14,7 @@ def download_gdrive_file(file_id: str, dest_path: str):
     """通常のGoogle DriveファイルをDL（大容量対応）"""
     import gdown
     url = f"https://drive.google.com/uc?id={file_id}"
-    gdown.download(url, dest_path, quiet=False, fuzzy=True)
+    gdown.download(url, dest_path, quiet=False)
     size_mb = os.path.getsize(dest_path) / 1024 / 1024
     print(f"  保存: {dest_path} ({size_mb:.1f} MB)")
 
