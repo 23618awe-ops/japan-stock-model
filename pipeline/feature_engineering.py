@@ -509,6 +509,8 @@ def run(input_path: str = INPUT_PATH, output_path: str = OUTPUT_PATH):
         # 証券コード → コード に統一
         if "証券コード" in df.columns and "コード" not in df.columns:
             df = df.rename(columns={"証券コード": "コード"})
+        # 余分な空列を除去
+        df = df[[c for c in df.columns if not c.startswith("Unnamed")]]
         print(f"  読み込み完了: {len(df):,} 行 × {len(df.columns)} 列")
         print(f"  列名: {list(df.columns)}")
     else:
