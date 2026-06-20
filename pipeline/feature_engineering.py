@@ -493,7 +493,11 @@ def run(input_path: str = INPUT_PATH, output_path: str = OUTPUT_PATH):
             __import__("unicodedata").normalize("NFKC", c).replace(" ", "").replace("　", "").strip()
             for c in df.columns
         ]
+        # 証券コード → コード に統一
+        if "証券コード" in df.columns and "コード" not in df.columns:
+            df = df.rename(columns={"証券コード": "コード"})
         print(f"  読み込み完了: {len(df):,} 行 × {len(df.columns)} 列")
+        print(f"  列名: {list(df.columns)}")
     else:
         df = load_csv(input_path)
 
