@@ -5,4 +5,5 @@ requests
 lightgbm
 scikit-learn
 openpyxl
+gdown
 jquants-api-client

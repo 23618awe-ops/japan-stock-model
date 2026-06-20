@@ -31,7 +31,7 @@ jobs:
 
       - name: Install dependencies
         run: |
-          pip install -q requests pandas numpy lightgbm scikit-learn openpyxl
+          pip install -q requests pandas numpy lightgbm scikit-learn openpyxl gdown
 
       - name: Cache output data
         uses: actions/cache@v4

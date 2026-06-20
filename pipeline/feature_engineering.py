@@ -11,8 +11,8 @@ import unicodedata
 import numpy as np
 import pandas as pd
 
-INPUT_PATH  = "output/gyoseki_price_完全版.csv"
-OUTPUT_PATH = "output/features.csv"
+INPUT_PATH  = "output/irbank_pl.xlsx"
+OUTPUT_PATH = "output/irbank_features.csv"
 
 
 # ── ロード ──────────────────────────────────────────────────────────────
