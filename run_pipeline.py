@@ -31,14 +31,15 @@ def step(name: str, fn):
 def main():
     parser = argparse.ArgumentParser(description="Japan Stock ML Pipeline")
     parser.add_argument("--skip-download",   action="store_true", help="データダウンロードをスキップ")
-    parser.add_argument("--skip-features",   action="store_true", help="特徴量エンジニアリングをスキップ")
+    parser.add_argument("--skip-features",   action="store_true", help="特徴量エンジニアリング(irbank)をスキップ")
+    parser.add_argument("--skip-merge",      action="store_true", help="特徴量マージ(irbank×株価)をスキップ")
     parser.add_argument("--skip-train",      action="store_true", help="モデルトレーニングをスキップ")
     parser.add_argument("--skip-backtest",   action="store_true", help="バックテストをスキップ")
     parser.add_argument("--skip-signals",    action="store_true", help="シグナル生成をスキップ")
     parser.add_argument("--signals-only",    action="store_true", help="シグナル生成のみ実行")
     args = parser.parse_args()
 
-    from pipeline import download_data, feature_engineering, train_model, backtest, generate_signals
+    from pipeline import download_data, feature_engineering, merge_features, train_model, backtest, generate_signals
 
     if args.signals_only:
         step("シグナル生成", generate_signals.run)
@@ -48,7 +49,10 @@ def main():
         step("データダウンロード (Google Drive)", download_data.run)
 
     if not args.skip_features:
-        step("特徴量エンジニアリング", feature_engineering.run)
+        step("特徴量エンジニアリング (irbank)", feature_engineering.run)
+
+    if not args.skip_merge:
+        step("特徴量マージ (irbank × 株価)", merge_features.run)
 
     if not args.skip_train:
         step("モデルトレーニング (LightGBM)", train_model.run)
