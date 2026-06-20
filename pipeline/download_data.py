@@ -9,34 +9,40 @@ import requests
 OUTPUT_DIR = "output"
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
-FILES = {
-    os.environ.get("GDRIVE_PRICE_FILE_ID", "1tq_8ZLijqy5fFQNzT8h4K-aApvyl15-U"): (
-        f"{OUTPUT_DIR}/price_clean_valuation.csv",
-        "株価・バリュエーションデータ",
-    ),
-    os.environ.get("GDRIVE_IRBANK_FILE_ID", "1-zRrPQvmxA8uKQstj600n4kzSlf-MQ7_"): (
-        f"{OUTPUT_DIR}/irbank_pl.xlsx",
-        "IRbank 業績データ",
-    ),
-}
-
 
 def download_from_gdrive(file_id: str, dest_path: str):
+    """Google Driveのファイルをダウンロードしてdest_pathに保存する"""
     url = "https://drive.usercontent.google.com/download"
     session = requests.Session()
-    r = session.get(url, params={"id": file_id, "confirm": "t", "export": "download"}, stream=True, timeout=300)
+
+    params = {"id": file_id, "confirm": "t", "export": "download"}
+    r = session.get(url, params=params, stream=True, timeout=300)
     r.raise_for_status()
+
     total = 0
     with open(dest_path, "wb") as f:
         for chunk in r.iter_content(chunk_size=1024 * 1024):
             if chunk:
                 f.write(chunk)
                 total += len(chunk)
+
     print(f"  保存: {dest_path} ({total / 1024 / 1024:.1f} MB)")
 
 
 def run():
-    for file_id, (dest, desc) in FILES.items():
+    files = {
+        # Google Drive file_id: (ローカル保存先, 説明)
+        os.environ.get("GDRIVE_PRICE_FILE_ID", "1tq_8ZLijqy5fFQNzT8h4K-aApvyl15-U"): (
+            f"{OUTPUT_DIR}/gyoseki_price_完全版.csv",
+            "業績・株価データ (price_clean_valuation.csv)",
+        ),
+        os.environ.get("GDRIVE_IRBANK_FILE_ID", "1-zRrPQvmxA8uKQstj600n4kzSlf-MQ7_"): (
+            f"{OUTPUT_DIR}/irbank_pl.xlsx",
+            "IRbank PLデータ",
+        ),
+    }
+
+    for file_id, (dest, desc) in files.items():
         if not file_id:
             print(f"  [skip] file_id未設定: {desc}")
             continue
