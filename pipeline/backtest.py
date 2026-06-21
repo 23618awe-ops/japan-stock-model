@@ -30,6 +30,11 @@ def run():
     print("データ読み込み中...")
     df = pd.read_csv(feat_path, encoding="utf-8-sig", low_memory=False)
 
+    # train_model と同様に _四半期_num を追加
+    if "_四半期" in df.columns and "_四半期_num" not in df.columns:
+        quarter_map = {"1Q": 1, "2Q": 2, "3Q": 3, "通期": 4}
+        df["_四半期_num"] = df["_四半期"].map(quarter_map)
+
     print("モデル読み込み中...")
     with open(MODEL_PATH, "rb") as f:
         payload = pickle.load(f)
@@ -45,17 +50,17 @@ def run():
     df["score"] = model.predict_proba(X)[:, 1]
     df["signal"] = (df["score"] >= THRESHOLD).astype(int)
 
-    # リターン計算
-    if "post_5d" in df.columns and "pre_close" in df.columns:
-        df["actual_return"] = df["post_5d"] / df["pre_close"].replace(0, np.nan) - 1
-    elif "T_post_5d" in df.columns and "T_pre_close" in df.columns:
-        df["actual_return"] = df["T_post_5d"] / df["T_pre_close"].replace(0, np.nan) - 1
+    # リターン計算（始値→終値）
+    if "target_return" in df.columns:
+        df["actual_return"] = pd.to_numeric(df["target_return"], errors="coerce")
+    elif "event_open" in df.columns and "event_close" in df.columns:
+        df["actual_return"] = df["event_close"] / df["event_open"].replace(0, np.nan) - 1
     else:
         print("[warning] 株価リターン列が見つかりません。スコアのみ出力します。")
         df["actual_return"] = np.nan
 
     # テスト期間のみバックテスト
-    date_col = "提出日" if "提出日" in df.columns else None
+    date_col = "イベント日" if "イベント日" in df.columns else ("提出日" if "提出日" in df.columns else None)
     if date_col and "年度_num" in df.columns:
         test_df = df[df["年度_num"] >= 2024].copy()
     else:
@@ -77,7 +82,7 @@ def run():
             "avg_return": r.mean(),
             "median_return": r.median(),
             "win_rate":   (r > 0).mean(),
-            "up5pct_rate": (r >= 0.05).mean(),
+            "up1pct_rate": (r >= 0.01).mean(),
             "sharpe":     r.mean() / r.std() if r.std() > 0 else np.nan,
             "max":        r.max(),
             "min":        r.min(),

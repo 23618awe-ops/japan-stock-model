@@ -1,8 +1,8 @@
 """
 業績データの特徴量エンジニアリング
 
-入力:  output/gyoseki_price_完全版.csv
-出力:  output/features.csv
+入力:  output/irbank_pl.xlsx
+出力:  output/irbank_features.csv
 """
 
 import re
@@ -11,8 +11,8 @@ import unicodedata
 import numpy as np
 import pandas as pd
 
-INPUT_PATH  = "output/gyoseki_price_完全版.csv"
-OUTPUT_PATH = "output/features.csv"
+INPUT_PATH  = "output/irbank_pl.xlsx"
+OUTPUT_PATH = "output/irbank_features.csv"
 
 
 # ── ロード ──────────────────────────────────────────────────────────────
@@ -47,6 +47,10 @@ def preprocess(df: pd.DataFrame) -> pd.DataFrame:
 
     df = df.rename(columns={"T_EPS_g": "EPS", "T_SPS_g": "SPS", "T_発行済株式数_推定": "株式数_推定"})
 
+    for _c in ["EPS", "SPS", "株式数_推定"]:
+        if _c not in df.columns:
+            df[_c] = np.nan
+
     num_cols = ["売上高", "営業利益", "経常利益", "当期純利益", "EPS", "SPS", "株式数_推定"]
     for col in num_cols:
         if col in df.columns:
@@ -74,44 +78,61 @@ def preprocess(df: pd.DataFrame) -> pd.DataFrame:
 
 # ── 基本指標 ──────────────────────────────────────────────────────────────
 def calc_base_metrics(df: pd.DataFrame) -> pd.DataFrame:
-    valid_shares = df["株式数_推定"].notna() & (df["株式数_推定"] != 0)
-    df["一株営業利益"] = np.where(valid_shares, df["営業利益"] * 1e6 / df["株式数_推定"], np.nan)
-    df["営業利益率"]   = np.where(df["売上高"].replace(0, np.nan).notna(), df["営業利益"] / df["売上高"], np.nan)
-    df["コスト率"]     = np.where(df["売上高"].replace(0, np.nan).notna(), (df["売上高"] - df["営業利益"]) / df["売上高"], np.nan)
-    df["営業外寄与"]   = np.where(df["売上高"].replace(0, np.nan).notna(), (df["経常利益"] - df["営業利益"]) / df["売上高"], np.nan)
-    df["最終調整寄与"] = np.where(df["売上高"].replace(0, np.nan).notna(), (df["当期純利益"] - df["経常利益"]) / df["売上高"], np.nan)
+    rev = df["売上高"].replace(0, np.nan)
+    df["営業利益率"]   = np.where(rev.notna(), df["営業利益"] / rev, np.nan)
+    df["コスト率"]     = np.where(rev.notna(), (df["売上高"] - df["営業利益"]) / rev, np.nan)
+    df["営業外寄与"]   = np.where(rev.notna(), (df["経常利益"] - df["営業利益"]) / rev, np.nan)
+    df["最終調整寄与"] = np.where(rev.notna(), (df["当期純利益"] - df["経常利益"]) / rev, np.nan)
+    df["純利益率"]     = np.where(rev.notna(), df["当期純利益"] / rev, np.nan)
 
-    is_actual = df["区分"].str.contains("実績", na=False)
-    df["EPS_実績"] = np.where(is_actual & valid_shares, df["当期純利益"] * 1e6 / df["株式数_推定"], np.nan)
-    df["SPS_実績"] = np.where(is_actual & valid_shares, df["売上高"]     * 1e6 / df["株式数_推定"], np.nan)
+    if "株式数_推定" in df.columns:
+        valid_shares = df["株式数_推定"].notna() & (df["株式数_推定"] != 0)
+        df["一株営業利益"] = np.where(valid_shares, df["営業利益"] * 1e6 / df["株式数_推定"], np.nan)
+        is_actual = df["区分"].str.contains("実績", na=False)
+        df["EPS_実績"] = np.where(is_actual & valid_shares, df["当期純利益"] * 1e6 / df["株式数_推定"], np.nan)
+        df["SPS_実績"] = np.where(is_actual & valid_shares, df["売上高"]     * 1e6 / df["株式数_推定"], np.nan)
+    else:
+        df["一株営業利益"] = np.nan
+        df["EPS_実績"]    = np.nan
+        df["SPS_実績"]    = np.nan
     return df
 
 
 # ── ガイダンス変化率 ──────────────────────────────────────────────────────
-RATE_COLS = ["売上高", "営業利益", "経常利益", "当期純利益", "EPS", "SPS", "一株営業利益", "営業利益率", "コスト率"]
+# EPS/SPS/一株営業利益はirbank_pl.xlsxに株数データがないため常にNaN → 除外
+RATE_COLS = ["売上高", "営業利益", "経常利益", "当期純利益", "営業利益率", "コスト率"]
 DIFF_COLS = ["営業外寄与", "最終調整寄与"]
 QUARTERS  = ["通期", "2Q"]
 
 
 def calc_guidance_change(df: pd.DataFrame) -> pd.DataFrame:
+    # Initialize output columns
+    rate_cols_out = []
     for q in QUARTERS:
         for col in RATE_COLS:
             df[f"{col}_{q}_ガイダンス変化率"] = np.nan
             df[f"{col}_{q}_k"] = np.nan
+            rate_cols_out.append(f"{col}_{q}_ガイダンス変化率")
+            rate_cols_out.append(f"{col}_{q}_k")
         for col in DIFF_COLS:
             df[f"{col}_{q}_ガイダンス差分"] = np.nan
+            rate_cols_out.append(f"{col}_{q}_ガイダンス差分")
+
+    # Accumulate updates to avoid repeated df.at calls
+    updates = {c: {} for c in rate_cols_out}
 
     for code, sub in df.groupby("コード"):
         sub = sub.sort_values("提出日")
-        for idx in sub.index:
-            row = sub.loc[idx]
-            if not ("予想" in str(row["区分"]) or "修正" in str(row["区分"])):
-                continue
+        # Pre-filter mask arrays for speed
+        is_yoso_or_kaito = sub["区分"].str.contains("予想|修正", na=False)
+        is_yoso = sub["区分"].str.contains("予想", na=False)
+
+        for idx, row in sub[is_yoso_or_kaito].iterrows():
             q = row["_四半期"]
             if q not in QUARTERS:
                 continue
 
-            if "予想" in str(row["区分"]):
+            if is_yoso.loc[idx]:
                 prev = sub[
                     (sub["_四半期"] == q) &
                     (~sub["区分"].str.contains("予想|修正", na=False)) &
@@ -125,14 +146,14 @@ def calc_guidance_change(df: pd.DataFrame) -> pd.DataFrame:
                     base = prev_row["EPS_実績"] if col == "EPS" else (prev_row["SPS_実績"] if col == "SPS" else prev_row[col])
                     cur  = row[col]
                     if pd.notna(base) and pd.notna(cur) and base != 0:
-                        df.at[idx, f"{col}_{q}_ガイダンス変化率"] = (cur - base) / base
+                        updates[f"{col}_{q}_ガイダンス変化率"][idx] = (cur - base) / base
                     if col in ("EPS", "SPS") and pd.notna(base) and pd.notna(cur):
                         k = (1 if cur >= base else 2) if base > 0 else (3 if cur >= base else 4)
-                        df.at[idx, f"{col}_{q}_k"] = k
+                        updates[f"{col}_{q}_k"][idx] = k
 
                 for col in DIFF_COLS:
                     if pd.notna(prev_row[col]) and pd.notna(row[col]):
-                        df.at[idx, f"{col}_{q}_ガイダンス差分"] = row[col] - prev_row[col]
+                        updates[f"{col}_{q}_ガイダンス差分"][idx] = row[col] - prev_row[col]
             else:
                 prev = sub[
                     (sub["_四半期"] == q) &
@@ -145,10 +166,15 @@ def calc_guidance_change(df: pd.DataFrame) -> pd.DataFrame:
                 prev_row = prev.iloc[-1]
                 for col in RATE_COLS:
                     if pd.notna(prev_row[col]) and pd.notna(row[col]) and prev_row[col] != 0:
-                        df.at[idx, f"{col}_{q}_ガイダンス変化率"] = (row[col] - prev_row[col]) / prev_row[col]
+                        updates[f"{col}_{q}_ガイダンス変化率"][idx] = (row[col] - prev_row[col]) / prev_row[col]
                 for col in DIFF_COLS:
                     if pd.notna(prev_row[col]) and pd.notna(row[col]):
-                        df.at[idx, f"{col}_{q}_ガイダンス差分"] = row[col] - prev_row[col]
+                        updates[f"{col}_{q}_ガイダンス差分"][idx] = row[col] - prev_row[col]
+
+    # Bulk assign
+    for col, vals in updates.items():
+        if vals:
+            df.loc[list(vals.keys()), col] = list(vals.values())
 
     df = df.drop(columns=[c for c in df.columns if c.endswith("_k") and "EPS" not in c and "SPS" not in c])
     return df
@@ -157,20 +183,24 @@ def calc_guidance_change(df: pd.DataFrame) -> pd.DataFrame:
 # ── 修正回数 ──────────────────────────────────────────────────────────────
 def calc_revision_count(df: pd.DataFrame) -> pd.DataFrame:
     df["修正回数"] = 0
+    updates = {}
+
     for code, sub in df.groupby("コード"):
         sub = sub.sort_values("提出日")
         counter: dict = {}
-        for idx in sub.index:
-            row = sub.loc[idx]
+        for idx, row in sub.iterrows():
             q = row["_四半期"]
             if q not in QUARTERS:
                 continue
             key = (row["年度_num"], q)
             if "修正" in str(row["区分"]):
                 counter[key] = counter.get(key, 0) + 1
-                df.at[idx, "修正回数"] = counter[key]
+                updates[idx] = counter[key]
             elif "予想" in str(row["区分"]):
                 counter[key] = 0
+
+    if updates:
+        df.loc[list(updates.keys()), "修正回数"] = list(updates.values())
 
     # 実績行にも修正回数を付与
     gk = df[df["区分"].str.contains("予想|修正", na=False)][["コード", "年度_num", "提出日", "修正回数"]].copy()
@@ -185,12 +215,24 @@ def calc_revision_count(df: pd.DataFrame) -> pd.DataFrame:
 
 # ── 前年乖離 ──────────────────────────────────────────────────────────────
 def calc_yoy_deviation(df: pd.DataFrame) -> pd.DataFrame:
+    # Initialize output columns
+    out_cols = []
+    for col in RATE_COLS:
+        df[f"{col}_ガイダンス実績乖離率_前年"] = np.nan
+        out_cols.append(f"{col}_ガイダンス実績乖離率_前年")
+    for col in DIFF_COLS:
+        df[f"{col}_ガイダンス実績乖離差分_前年"] = np.nan
+        out_cols.append(f"{col}_ガイダンス実績乖離差分_前年")
+
+    updates = {c: {} for c in out_cols}
+
     for code, sub in df.groupby("コード"):
         sub = sub.sort_values("提出日")
-        for idx in sub.index:
-            row = sub.loc[idx]
-            if not ("予想" in str(row["区分"]) or "修正" in str(row["区分"])):
-                continue
+        is_yoso = sub["区分"].str.contains("予想", na=False)
+        is_kaito = sub["区分"].str.contains("修正", na=False)
+        is_yoso_or_kaito = is_yoso | is_kaito
+
+        for idx, row in sub[is_yoso_or_kaito].iterrows():
             q = row["_四半期"]
             if q not in QUARTERS:
                 continue
@@ -204,7 +246,7 @@ def calc_yoy_deviation(df: pd.DataFrame) -> pd.DataFrame:
                 continue
             prev_actual_row = prev_actual.iloc[-1]
 
-            if "予想" in str(row["区分"]):
+            if is_yoso.loc[idx]:
                 prev_f = prev_sub[prev_sub["区分"].str.contains("予想", na=False)]
                 if prev_f.empty:
                     continue
@@ -219,11 +261,16 @@ def calc_yoy_deviation(df: pd.DataFrame) -> pd.DataFrame:
             for col in RATE_COLS:
                 base, actual = target_row[col], prev_actual_row[col]
                 if pd.notna(base) and pd.notna(actual) and base != 0:
-                    df.at[idx, f"{col}_ガイダンス実績乖離率_前年"] = (actual - base) / base
+                    updates[f"{col}_ガイダンス実績乖離率_前年"][idx] = (actual - base) / base
             for col in DIFF_COLS:
                 base, actual = target_row[col], prev_actual_row[col]
                 if pd.notna(base) and pd.notna(actual):
-                    df.at[idx, f"{col}_ガイダンス実績乖離差分_前年"] = actual - base
+                    updates[f"{col}_ガイダンス実績乖離差分_前年"][idx] = actual - base
+
+    for col, vals in updates.items():
+        if vals:
+            df.loc[list(vals.keys()), col] = list(vals.values())
+
     return df
 
 
@@ -304,34 +351,36 @@ def calc_actual_metrics(df: pd.DataFrame) -> pd.DataFrame:
         df_actual[f"{col}_YoY_abs"] = df_actual[f"{col}_YoY_abs"].clip(-5, 5)
     df_actual = df_actual.drop(columns=[c for c in df_actual.columns if c.startswith("_p_")])
 
-    # 実績累計・単期 赤転/黒転フラグ (ループ版)
+    # 実績累計・単期 赤転/黒転フラグ — vectorized via merge
     flag_cols = ["営業利益", "当期純利益"]
+    flag_out_cols = []
     for col in flag_cols:
         for t in ["累計", "単期"]:
-            df_actual[f"{col}_実績_{t}_赤転"] = np.nan
-            df_actual[f"{col}_実績_{t}_黒転"] = np.nan
+            for direction in ["赤転", "黒転"]:
+                cname = f"{col}_実績_{t}_{direction}"
+                df_actual[cname] = np.nan
+                flag_out_cols.append(cname)
 
-    for code, sub in df_actual.groupby("コード"):
-        sub = sub.sort_values("提出日")
-        for idx in sub.index:
-            row = sub.loc[idx]
-            q = row["_四半期"]
-            if pd.isna(q):
-                continue
-            prev = sub[(sub["_四半期"] == q) & (sub["年度_num"] == row["年度_num"] - 1)]
-            if prev.empty:
-                continue
-            prev_row = prev.iloc[-1]
-            for col in flag_cols:
-                bc, cc = prev_row[col], row[col]
-                if pd.notna(bc) and pd.notna(cc):
-                    df_actual.at[idx, f"{col}_実績_累計_赤転"] = int(bc > 0 and cc < 0)
-                    df_actual.at[idx, f"{col}_実績_累計_黒転"] = int(bc < 0 and cc >= 0)
-                tc = f"{col}_単期"
-                bt = prev_row.get(tc, np.nan); ct = row.get(tc, np.nan)
-                if pd.notna(bt) and pd.notna(ct):
-                    df_actual.at[idx, f"{col}_実績_単期_赤転"] = int(bt > 0 and ct < 0)
-                    df_actual.at[idx, f"{col}_実績_単期_黒転"] = int(bt < 0 and ct >= 0)
+    # Build prev-year actual lookup and merge
+    actual_key = ["コード", "_四半期"]
+    yoy_flag_cols = flag_cols + [f"{c}_単期" for c in flag_cols]
+    prev_actual = df_actual[actual_key + ["年度_num"] + yoy_flag_cols].copy()
+    prev_actual = prev_actual.drop_duplicates(subset=["コード", "_四半期", "年度_num"], keep="last")
+    prev_actual = prev_actual.rename(columns={c: f"_py_{c}" for c in yoy_flag_cols})
+    prev_actual["年度_num"] = prev_actual["年度_num"] + 1
+    df_actual = df_actual.merge(prev_actual, on=actual_key + ["年度_num"], how="left")
+
+    for col in flag_cols:
+        bc = df_actual[f"_py_{col}"]
+        cc = df_actual[col]
+        bt = df_actual[f"_py_{col}_単期"]
+        ct = df_actual[f"{col}_単期"]
+        df_actual[f"{col}_実績_累計_赤転"] = ((bc > 0) & (cc < 0)).astype(float).where(bc.notna() & cc.notna())
+        df_actual[f"{col}_実績_累計_黒転"] = ((bc < 0) & (cc >= 0)).astype(float).where(bc.notna() & cc.notna())
+        df_actual[f"{col}_実績_単期_赤転"] = ((bt > 0) & (ct < 0)).astype(float).where(bt.notna() & ct.notna())
+        df_actual[f"{col}_実績_単期_黒転"] = ((bt < 0) & (ct >= 0)).astype(float).where(bt.notna() & ct.notna())
+
+    df_actual = df_actual.drop(columns=[c for c in df_actual.columns if c.startswith("_py_")])
 
     return df, df_actual
 
@@ -351,38 +400,56 @@ def _achievement(actual, guide):
 
 def calc_achievement(df: pd.DataFrame) -> pd.DataFrame:
     actual_cols = ["売上高", "営業利益", "経常利益", "当期純利益"]
+    out_col_names = []
     for col in actual_cols:
         for q in QUARTERS:
-            df[f"{col}_達成率_累計_{q}G"] = np.nan
-            df[f"{col}_達成率_単体_{q}G"] = np.nan
-            df[f"{col}_達成率フラグ_{q}G"] = np.nan
+            for suffix in ["達成率_累計", "達成率_単体", "達成率フラグ"]:
+                cname = f"{col}_{suffix}_{q}G"
+                df[cname] = np.nan
+                out_col_names.append(cname)
 
     df = df.sort_values(["コード", "年度_num", "提出日"])
 
-    for code, grp_code in df.groupby("コード"):
-        for year, sub in grp_code.groupby("年度_num"):
-            sub = sub.sort_values("提出日").reset_index()
-            sub = sub.rename(columns={"index": "_orig"})
-            orig = sub["_orig"]
+    updates = {c: {} for c in out_col_names}
 
-            for pos, row in sub.iterrows():
-                if "実績" not in str(row["区分"]):
+    for code, grp_code in df.groupby("コード"):
+        for year, sub_orig in grp_code.groupby("年度_num"):
+            sub = sub_orig.sort_values("提出日").reset_index()
+            sub = sub.rename(columns={"index": "_orig"})
+            orig_ids = sub["_orig"].values
+
+            is_actual_mask = sub["区分"].str.contains("実績", na=False)
+            is_guidance_mask = sub["区分"].str.contains("予想|修正", na=False)
+
+            for pos in range(len(sub)):
+                if not is_actual_mask.iloc[pos]:
                     continue
+                row = sub.iloc[pos]
+                real_idx = orig_ids[pos]
+
                 for q in QUARTERS:
-                    guidance = sub[
+                    guidance_mask = (
                         (sub["_四半期"] == q) &
                         (sub["提出日"] <= row["提出日"]) &
-                        (sub["区分"].str.contains("予想|修正", na=False))
-                    ]
+                        is_guidance_mask
+                    )
+                    guidance = sub[guidance_mask]
                     if guidance.empty:
                         continue
                     latest = guidance.iloc[-1]
                     for col in actual_cols:
                         rate, flag = _achievement(row[col], latest[col])
-                        df.at[orig.iloc[pos], f"{col}_達成率_累計_{q}G"] = rate
-                        df.at[orig.iloc[pos], f"{col}_達成率フラグ_{q}G"] = flag
-                        rate_t, _ = _achievement(row.get(f"{col}_単期", np.nan), latest[col])
-                        df.at[orig.iloc[pos], f"{col}_達成率_単体_{q}G"] = rate_t
+                        updates[f"{col}_達成率_累計_{q}G"][real_idx] = rate
+                        updates[f"{col}_達成率フラグ_{q}G"][real_idx] = flag
+                        rate_t, _ = _achievement(
+                            row[f"{col}_単期"] if f"{col}_単期" in row.index else np.nan,
+                            latest[col]
+                        )
+                        updates[f"{col}_達成率_単体_{q}G"][real_idx] = rate_t
+
+    for col, vals in updates.items():
+        if vals:
+            df.loc[list(vals.keys()), col] = list(vals.values())
 
     # 前年達成率
     ach_cols = [c for c in df.columns if "達成率" in c]
@@ -397,24 +464,31 @@ def calc_achievement(df: pd.DataFrame) -> pd.DataFrame:
 # ── ガイダンス符号変化フラグ ──────────────────────────────────────────────
 def calc_guidance_sign_flags(df: pd.DataFrame) -> pd.DataFrame:
     flag_cols = ["営業利益", "当期純利益"]
+    out_col_names = []
     for col in flag_cols:
         for q in QUARTERS:
-            df[f"{col}_ガイダンス_{q}_赤転"] = np.nan
-            df[f"{col}_ガイダンス_{q}_黒転"] = np.nan
+            for direction in ["赤転", "黒転"]:
+                cname = f"{col}_ガイダンス_{q}_{direction}"
+                df[cname] = np.nan
+                out_col_names.append(cname)
+
+    updates = {c: {} for c in out_col_names}
 
     for code, sub in df.groupby("コード"):
         sub = sub.sort_values("提出日")
+        is_guidance = sub["区分"].str.contains("予想|修正", na=False)
+        is_yoso = sub["区分"].str.contains("予想", na=False)
+
         for col in flag_cols:
             for q in QUARTERS:
-                gsub = sub[sub["区分"].str.contains("予想|修正", na=False) & (sub["_四半期"] == q)].sort_values("提出日")
-                for idx in gsub.index:
-                    row = gsub.loc[idx]
+                gsub = sub[is_guidance & (sub["_四半期"] == q)].sort_values("提出日")
+                for idx, row in gsub.iterrows():
                     cur_val = row[col]
                     prev_year = row["年度_num"] - 1
                     prev_c = gsub[gsub["年度_num"] == prev_year].sort_values("提出日")
                     if prev_c.empty:
                         continue
-                    if "予想" in str(row["区分"]):
+                    if is_yoso.loc[idx]:
                         pf = prev_c[prev_c["区分"].str.contains("予想", na=False)]
                         if pf.empty:
                             continue
@@ -427,8 +501,13 @@ def calc_guidance_sign_flags(df: pd.DataFrame) -> pd.DataFrame:
                         prev_val = pr.iloc[n - 1][col] if len(pr) >= n else pr.iloc[-1][col]
                     if pd.isna(cur_val) or pd.isna(prev_val):
                         continue
-                    df.at[idx, f"{col}_ガイダンス_{q}_黒転"] = int(prev_val < 0 and cur_val >= 0)
-                    df.at[idx, f"{col}_ガイダンス_{q}_赤転"] = int(prev_val >= 0 and cur_val < 0)
+                    updates[f"{col}_ガイダンス_{q}_黒転"][idx] = int(prev_val < 0 and cur_val >= 0)
+                    updates[f"{col}_ガイダンス_{q}_赤転"][idx] = int(prev_val >= 0 and cur_val < 0)
+
+    for col, vals in updates.items():
+        if vals:
+            df.loc[list(vals.keys()), col] = list(vals.values())
+
     return df
 
 
@@ -468,8 +547,9 @@ def assemble(df: pd.DataFrame, df_actual: pd.DataFrame) -> pd.DataFrame:
     if guidance_rikai_cols:
         df_rikai = df_guidance[["コード", "年度_num", "修正回数"] + guidance_rikai_cols].copy()
         df_rikai["年度_num"] = df_rikai["年度_num"] + 1
-        df_rikai = df_rikai.drop_duplicates(subset=["コード", "年度_num", "修正回数"], keep="last")
-        df_actual_only = df_actual_only.merge(df_rikai, on=["コード", "年度_num", "修正回数"], how="left")
+        df_rikai = df_rikai.sort_values("修正回数").drop_duplicates(subset=["コード", "年度_num"], keep="last")
+        df_rikai = df_rikai.drop(columns=["修正回数"])
+        df_actual_only = df_actual_only.merge(df_rikai, on=["コード", "年度_num"], how="left")
 
     df_actual_only = df_actual_only.drop(columns=[c for c in df_actual_only.columns if c.endswith("_k")], errors="ignore")
 
@@ -486,7 +566,20 @@ def run(input_path: str = INPUT_PATH, output_path: str = OUTPUT_PATH):
         return
 
     print(f"データ読み込み: {input_path}")
-    df = load_csv(input_path)
+    ext = os.path.splitext(input_path)[1].lower()
+    if ext in (".xlsx", ".xls"):
+        df = pd.read_excel(input_path, dtype=str, engine="openpyxl")
+        df.columns = [
+            __import__("unicodedata").normalize("NFKC", c).replace(" ", "").replace("　", "").strip()
+            for c in df.columns
+        ]
+        if "証券コード" in df.columns and "コード" not in df.columns:
+            df = df.rename(columns={"証券コード": "コード"})
+        df = df[[c for c in df.columns if not c.startswith("Unnamed")]]
+        print(f"  読み込み完了: {len(df):,} 行 × {len(df.columns)} 列")
+        print(f"  列名: {list(df.columns)}")
+    else:
+        df = load_csv(input_path)
 
     print("前処理中...")
     df = preprocess(df)
@@ -505,6 +598,12 @@ def run(input_path: str = INPUT_PATH, output_path: str = OUTPUT_PATH):
     df, df_actual = calc_actual_metrics(df)
 
     print("達成率計算中...")
+    # _単期列をdf_actualからdfにマージしてから達成率計算（単体達成率に必要）
+    tanki_cols = [f"{c}_単期" for c in ["売上高", "営業利益", "経常利益", "当期純利益"]]
+    tanki_avail = [c for c in tanki_cols if c in df_actual.columns]
+    if tanki_avail:
+        merge_key4 = ["コード", "年度_num", "_四半期", "提出日"]
+        df = df.merge(df_actual[merge_key4 + tanki_avail], on=merge_key4, how="left")
     df = calc_achievement(df)
 
     print("ガイダンス符号変化フラグ計算中...")

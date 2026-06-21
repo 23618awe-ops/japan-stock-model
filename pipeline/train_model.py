@@ -4,7 +4,7 @@ LightGBMモデルのトレーニング
 入力:  output/features.csv
 出力:  output/model_lgbm.pkl, output/feature_importance.csv
 
-目的変数: 決算発表翌日〜5営業日の株価変化率が5%以上上昇(=1), それ以外(=0)
+目的変数: 決算発表翌営業日の始値→終値で上昇(=1), それ以外(=0)
 """
 
 import os
@@ -31,7 +31,6 @@ FEATURE_COLS = [
     "営業利益_通期_ガイダンス変化率",
     "経常利益_通期_ガイダンス変化率",
     "当期純利益_通期_ガイダンス変化率",
-    "EPS_通期_ガイダンス変化率",
     "営業利益率_通期_ガイダンス変化率",
     "コスト率_通期_ガイダンス変化率",
     # ガイダンス変化率（2Q）
@@ -75,30 +74,35 @@ FEATURE_COLS = [
     "最終調整寄与",
 ]
 
-TARGET_COL = "target_5d_up5pct"
+TARGET_COL = "target_intraday_up"
 
 
 def build_target(df: pd.DataFrame) -> pd.DataFrame:
-    """post_5d (5営業日後株価) / pre_close で5%超騰落を目的変数に"""
-    # 株価カラムがあれば利用
-    if "post_5d" in df.columns and "pre_close" in df.columns:
-        ret = (df["post_5d"] / df["pre_close"].replace(0, np.nan) - 1)
-    elif "T_post_5d" in df.columns and "T_pre_close" in df.columns:
-        ret = (df["T_post_5d"] / df["T_pre_close"].replace(0, np.nan) - 1)
+    """翌営業日の始値→終値で上昇(=1), それ以外(=0)"""
+    if "target_return" in df.columns:
+        ret = pd.to_numeric(df["target_return"], errors="coerce")
+    elif "event_open" in df.columns and "event_close" in df.columns:
+        ret = df["event_close"] / df["event_open"].replace(0, np.nan) - 1
     else:
-        print("  [warning] 株価列(post_5d/pre_close)が見つかりません。ダミー目的変数を使用。")
+        print("  [warning] 株価列が見つかりません。ダミー目的変数を使用。")
         np.random.seed(42)
-        df[TARGET_COL] = (np.random.rand(len(df)) > 0.8).astype(int)
+        df[TARGET_COL] = (np.random.rand(len(df)) > 0.95).astype(int)
         return df
 
-    df[TARGET_COL] = (ret >= 0.05).astype(int)
+    df[TARGET_COL] = (ret > 0).astype(int)
+    df["target_return"] = ret
     print(f"  目的変数分布: {df[TARGET_COL].value_counts().to_dict()}")
     return df
 
 
+QUARTER_MAP = {"1Q": 1, "2Q": 2, "3Q": 3, "通期": 4}
+
+
 def select_features(df: pd.DataFrame) -> list[str]:
     available = [c for c in FEATURE_COLS if c in df.columns]
-    print(f"  利用可能な特徴量: {len(available)} / {len(FEATURE_COLS)}")
+    if "_四半期_num" in df.columns:
+        available = ["_四半期_num"] + available
+    print(f"  利用可能な特徴量: {len(available)} / {len(FEATURE_COLS) + 1}")
     return available
 
 
@@ -108,6 +112,11 @@ def train(df: pd.DataFrame):
         return
 
     df = build_target(df)
+
+    # _四半期_num をスプリット前に追加（スライス後に追加すると反映されないため）
+    if "_四半期" in df.columns:
+        df = df.copy()
+        df["_四半期_num"] = df["_四半期"].map(QUARTER_MAP)
 
     # 時系列split: train<=2022, val=2023, test>=2024
     if "年度_num" in df.columns:

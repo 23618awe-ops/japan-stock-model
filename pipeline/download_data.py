@@ -10,59 +10,42 @@ OUTPUT_DIR = "output"
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 
-def download_from_gdrive(file_id: str, dest_path: str):
-    """Google Driveのファイルをダウンロードしてdest_pathに保存する（大容量対応）"""
-    session = requests.Session()
+def download_gdrive_file(file_id: str, dest_path: str):
+    """通常のGoogle DriveファイルをDL（大容量対応）"""
+    import gdown
+    url = f"https://drive.google.com/uc?id={file_id}"
+    gdown.download(url, dest_path, quiet=False)
+    size_mb = os.path.getsize(dest_path) / 1024 / 1024
+    print(f"  保存: {dest_path} ({size_mb:.1f} MB)")
 
-    # 1回目: ウイルススキャン確認ページを取得してtokenを抽出
-    url = f"https://drive.google.com/uc?export=download&id={file_id}"
-    r = session.get(url, timeout=60)
 
-    # 確認ページが返ってきた場合はtokenを取得して再リクエスト
-    if "confirm=" in r.text or "download_warning" in r.text:
-        import re
-        token_match = re.search(r'confirm=([0-9A-Za-z_\-]+)', r.text)
-        if token_match:
-            token = token_match.group(1)
-            params = {"export": "download", "id": file_id, "confirm": token}
-            r = session.get("https://drive.google.com/uc", params=params, stream=True, timeout=600)
-        else:
-            # drive.usercontent.google.com 経由で再試行
-            r = session.get(
-                "https://drive.usercontent.google.com/download",
-                params={"id": file_id, "confirm": "t", "export": "download"},
-                stream=True, timeout=600,
-            )
-    else:
-        # 小さいファイルはそのままダウンロード完了している場合がある
-        r = session.get(url, stream=True, timeout=600)
-
+def download_gsheet(sheet_id: str, dest_path: str):
+    """Google SheetsファイルをxlsxとしてエクスポートDL"""
+    url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/export?format=xlsx"
+    r = requests.get(url, stream=True, timeout=300)
     r.raise_for_status()
-
     total = 0
     with open(dest_path, "wb") as f:
         for chunk in r.iter_content(chunk_size=1024 * 1024):
             if chunk:
                 f.write(chunk)
                 total += len(chunk)
-
-    print(f"  保存: {dest_path} ({total / 1024 / 1024:.1f} MB)")
+    size_mb = total / 1024 / 1024
+    if size_mb < 0.01:
+        raise RuntimeError(f"ダウンロードサイズが小さすぎます ({total} bytes) — 共有設定を確認してください")
+    print(f"  保存: {dest_path} ({size_mb:.1f} MB)")
 
 
 def run():
-    files = {
-        # Google Drive file_id: (ローカル保存先, 説明)
-        os.environ.get("GDRIVE_PRICE_FILE_ID", "1tq_8ZLijqy5fFQNzT8h4K-aApvyl15-U"): (
-            f"{OUTPUT_DIR}/price_clean_valuation.csv",
-            "株価・バリュエーションデータ",
-        ),
-        os.environ.get("GDRIVE_IRBANK_FILE_ID", "1-zRrPQvmxA8uKQstj600n4kzSlf-MQ7_"): (
-            f"{OUTPUT_DIR}/irbank_pl.xlsx",
-            "IRbank PLデータ",
-        ),
-    }
+    price_file_id = os.environ.get("GDRIVE_PRICE_FILE_ID", "1tq_8ZLijqy5fFQNzT8h4K-aApvyl15-U")
+    irbank_sheet_id = os.environ.get("GDRIVE_IRBANK_FILE_ID", "1-zRrPQvmxA8uKQstj600n4kzSlf-MQ7_")
 
-    for file_id, (dest, desc) in files.items():
+    tasks = [
+        (price_file_id,   f"{OUTPUT_DIR}/price_clean_valuation.csv", "株価・バリュエーションデータ", "drive"),
+        (irbank_sheet_id, f"{OUTPUT_DIR}/irbank_pl.xlsx",            "IRbank PLデータ (Sheets)",    "sheets"),
+    ]
+
+    for file_id, dest, desc, kind in tasks:
         if not file_id:
             print(f"  [skip] file_id未設定: {desc}")
             continue
@@ -72,7 +55,10 @@ def run():
             continue
         print(f"  ダウンロード中: {desc} ...")
         try:
-            download_from_gdrive(file_id, dest)
+            if kind == "sheets":
+                download_gsheet(file_id, dest)
+            else:
+                download_gdrive_file(file_id, dest)
         except Exception as e:
             print(f"  [error] {desc}: {e}", file=sys.stderr)
             sys.exit(1)

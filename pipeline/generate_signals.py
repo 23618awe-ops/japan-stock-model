@@ -31,13 +31,18 @@ def run():
     print("データ・モデル読み込み中...")
     df = pd.read_csv(feat_path, encoding="utf-8-sig", low_memory=False)
 
+    # train_model と同様に _四半期_num を追加
+    if "_四半期" in df.columns and "_四半期_num" not in df.columns:
+        quarter_map = {"1Q": 1, "2Q": 2, "3Q": 3, "通期": 4}
+        df["_四半期_num"] = df["_四半期"].map(quarter_map)
+
     with open(MODEL_PATH, "rb") as f:
         payload = pickle.load(f)
     model    = payload["model"]
     features = payload["features"]
 
     # 最新の決算データのみ対象
-    date_col = "提出日" if "提出日" in df.columns else None
+    date_col = "イベント日" if "イベント日" in df.columns else ("提出日" if "提出日" in df.columns else None)
     if date_col:
         df[date_col] = pd.to_datetime(df[date_col], errors="coerce")
         cutoff = datetime.now() - timedelta(days=90)   # 直近90日
