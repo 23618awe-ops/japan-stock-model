@@ -4,7 +4,7 @@ LightGBMモデルのトレーニング
 入力:  output/features.csv
 出力:  output/model_lgbm.pkl, output/feature_importance.csv
 
-目的変数: 決算発表翌日〜5営業日の株価変化率が5%以上上昇(=1), それ以外(=0)
+目的変数: 決算発表翌営業日の始値→終値で上昇(=1), それ以外(=0)
 """
 
 import os
@@ -74,23 +74,23 @@ FEATURE_COLS = [
     "最終調整寄与",
 ]
 
-TARGET_COL = "target_20d_up10pct"
+TARGET_COL = "target_intraday_up"
 
 
 def build_target(df: pd.DataFrame) -> pd.DataFrame:
-    """post_20d (20営業日後株価) / pre_close で10%超上昇を目的変数に"""
-    if "post_20d" in df.columns and "pre_close" in df.columns:
-        ret = (df["post_20d"] / df["pre_close"].replace(0, np.nan) - 1)
-    elif "post_5d" in df.columns and "pre_close" in df.columns:
-        print("  [warning] post_20d が見つかりません。post_5d で代用します。")
-        ret = (df["post_5d"] / df["pre_close"].replace(0, np.nan) - 1)
+    """翌営業日の始値→終値で上昇(=1), それ以外(=0)"""
+    if "target_return" in df.columns:
+        ret = pd.to_numeric(df["target_return"], errors="coerce")
+    elif "event_open" in df.columns and "event_close" in df.columns:
+        ret = df["event_close"] / df["event_open"].replace(0, np.nan) - 1
     else:
         print("  [warning] 株価列が見つかりません。ダミー目的変数を使用。")
         np.random.seed(42)
         df[TARGET_COL] = (np.random.rand(len(df)) > 0.95).astype(int)
         return df
 
-    df[TARGET_COL] = (ret >= 0.10).astype(int)
+    df[TARGET_COL] = (ret > 0).astype(int)
+    df["target_return"] = ret
     print(f"  目的変数分布: {df[TARGET_COL].value_counts().to_dict()}")
     return df
 

@@ -42,7 +42,7 @@ def run():
     features = payload["features"]
 
     # 最新の決算データのみ対象
-    date_col = "提出日" if "提出日" in df.columns else None
+    date_col = "イベント日" if "イベント日" in df.columns else ("提出日" if "提出日" in df.columns else None)
     if date_col:
         df[date_col] = pd.to_datetime(df[date_col], errors="coerce")
         cutoff = datetime.now() - timedelta(days=90)   # 直近90日

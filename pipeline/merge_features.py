@@ -9,12 +9,11 @@ irbank特徴量とプライスデータをマージして features.csv を生成
   output/features.csv  (train_model.py への入力)
 
 処理内容:
-  - 決算提出日の翌営業日の株価・時価総額を取得
-  - 株数 = 時価総額 / 終値 で算出
-  - EPS = 当期純利益 × 1e6 / 株数
-  - SPS = 売上高 × 1e6 / 株数  (irbank数値は百万円単位)
-  - pre_close = 提出日翌営業日の終値
-  - post_5d   = 提出日翌営業日+5営業日の終値  (目的変数用)
+  - イベント（実績発表 / ガイダンス修正）ごとに1行を生成
+  - 各イベント時点の「最新実績」+「最新ガイダンス」を紐づけ
+  - ガイダンス修正のみのイベントでは直前実績を複製
+  - 翌営業日の始値→終値リターンを目的変数に
+  - 時価総額/終値から株数を推定し EPS/SPS を算出
 """
 
 import gc
@@ -26,11 +25,11 @@ IRBANK_FEATURES = "output/irbank_features.csv"
 PRICE_CSV       = "output/price_clean_valuation.csv"
 OUTPUT_PATH     = "output/features.csv"
 
-# ── 列名候補 ─────────────────────────────────────────────────────────────────
 CODE_CANDIDATES  = ["コード", "証券コード", "銘柄コード", "code", "Code", "ticker", "銘柄", "stock_code"]
 DATE_CANDIDATES  = ["日付", "Date", "date", "取引日", "営業日", "trading_date"]
 CLOSE_CANDIDATES = ["終値", "Close", "close", "adj_close", "Adj Close", "adjusted_close"]
-MCAP_CANDIDATES  = ["時価総額", "marketCap", "market_cap", "MarketCap", "時価総額(円)", "時価総額_円"]
+OPEN_CANDIDATES  = ["始値", "Open", "open"]
+MCAP_CANDIDATES  = ["時価総額", "marketCap", "market_cap", "MarketCap", "時価総額(円)", "時価総額_円", "MarketCap"]
 
 
 def normalize(s: str) -> str:
@@ -51,13 +50,10 @@ def detect_col(cols: list[str], candidates: list[str]) -> str | None:
 
 
 def load_price_data(path: str) -> tuple[pd.DataFrame, dict]:
-    """プライスデータを読み込み、列名マッピングを返す"""
     print(f"プライスデータ読み込み中: {path}")
-    print("  (2GB超の大きなファイルです。しばらくお待ちください...)")
 
     for enc in ["utf-8-sig", "cp932", "utf-8"]:
         try:
-            # まず先頭1行だけ読んで列名確認
             sample = pd.read_csv(path, encoding=enc, nrows=3, dtype=str)
             break
         except UnicodeDecodeError:
@@ -68,26 +64,22 @@ def load_price_data(path: str) -> tuple[pd.DataFrame, dict]:
         raise RuntimeError(f"プライスデータ読み込み失敗: {path}")
 
     cols = list(sample.columns)
-    print(f"  列数: {len(cols)}")
-    print(f"  列名: {cols}")
+    print(f"  列数: {len(cols)}, 列名: {cols}")
 
     col_code  = detect_col(cols, CODE_CANDIDATES)
     col_date  = detect_col(cols, DATE_CANDIDATES)
     col_close = detect_col(cols, CLOSE_CANDIDATES)
+    col_open  = detect_col(cols, OPEN_CANDIDATES)
     col_mcap  = detect_col(cols, MCAP_CANDIDATES)
 
-    print(f"  検出: code='{col_code}', date='{col_date}', close='{col_close}', 時価総額='{col_mcap}'")
+    print(f"  検出: code='{col_code}', date='{col_date}', open='{col_open}', close='{col_close}', mcap='{col_mcap}'")
 
     missing = [name for name, col in [("code", col_code), ("date", col_date), ("close", col_close)]
                if col is None]
     if missing:
-        raise RuntimeError(
-            f"必須列が見つかりません: {missing}\n"
-            f"実際の列名: {cols}\n"
-            f"CODE_CANDIDATES, DATE_CANDIDATES, CLOSE_CANDIDATES を更新してください"
-        )
+        raise RuntimeError(f"必須列が見つかりません: {missing}\n実際の列名: {cols}")
 
-    use_cols = [c for c in [col_code, col_date, col_close, col_mcap] if c is not None]
+    use_cols = [c for c in [col_code, col_date, col_open, col_close, col_mcap] if c is not None]
 
     chunks = []
     for chunk in pd.read_csv(path, encoding=enc, dtype=str, usecols=use_cols,
@@ -102,6 +94,7 @@ def load_price_data(path: str) -> tuple[pd.DataFrame, dict]:
         "code":  normalize(col_code),
         "date":  normalize(col_date),
         "close": normalize(col_close),
+        "open":  normalize(col_open) if col_open else None,
         "mcap":  normalize(col_mcap) if col_mcap else None,
     }
     print(f"  読み込み完了: {len(df):,} 行")
@@ -109,130 +102,167 @@ def load_price_data(path: str) -> tuple[pd.DataFrame, dict]:
 
 
 def prepare_price(df: pd.DataFrame, col_map: dict) -> pd.DataFrame:
-    """プライスデータを整理"""
     cn = col_map["code"]
     dn = col_map["date"]
     cl = col_map["close"]
+    op = col_map["open"]
     mc = col_map["mcap"]
 
     df[dn] = pd.to_datetime(df[dn], errors="coerce")
     df[cl] = pd.to_numeric(df[cl], errors="coerce")
+    if op:
+        df[op] = pd.to_numeric(df[op], errors="coerce")
     if mc:
         df[mc] = pd.to_numeric(df[mc], errors="coerce")
 
-    # 証券コードを4桁文字列に統一
     df[cn] = df[cn].astype(str).str.strip().str.extract(r"(\d{4})", expand=False)
     df = df.dropna(subset=[cn, dn, cl])
     df = df.sort_values([cn, dn]).reset_index(drop=True)
     return df
 
 
-def build_event_prices(irbank: pd.DataFrame, price: pd.DataFrame, col_map: dict) -> pd.DataFrame:
+def build_event_rows(irbank: pd.DataFrame, price: pd.DataFrame, col_map: dict) -> pd.DataFrame:
     """
-    irbank の各行に対して提出日翌営業日の pre_close と
-    さらに5営業日後の post_5d をアタッチする
+    イベントごとに1行生成:
+      - 実績発表: 新しい実績 + その時点の最新ガイダンス
+      - ガイダンス修正（実績なし同日）: 直前実績を複製 + 新しいガイダンス
+      - 翌営業日の始値→終値リターンを目的変数
     """
     cn = col_map["code"]
     dn = col_map["date"]
     cl = col_map["close"]
+    op = col_map["open"]
     mc = col_map["mcap"]
 
     irbank = irbank.copy()
     irbank["提出日"] = pd.to_datetime(irbank["提出日"], errors="coerce")
     irbank["コード4"] = irbank["コード"].astype(str).str.strip().str.extract(r"(\d{4})", expand=False)
 
-    pre_rows    = []
-    post5_rows  = []
-    post20_rows = []
+    # irbank の行を実績 / ガイダンス に分類
+    is_actual_mask   = ~irbank["区分"].str.contains("予想|修正", na=False)
+    is_guidance_mask = irbank["区分"].str.contains("予想|修正", na=False)
 
-    for code, grp in price.groupby(cn):
-        grp = grp.sort_values(dn).reset_index(drop=True)
-        trading_days = grp[dn].values
-        closes       = grp[cl].values
-        mcaps        = grp[mc].values if mc else np.full(len(grp), np.nan)
+    result_rows = []
 
-        sub_irbank = irbank[irbank["コード4"] == str(code)]
-        if sub_irbank.empty:
+    for code in irbank["コード4"].dropna().unique():
+        sub = irbank[irbank["コード4"] == code].sort_values("提出日")
+        if sub.empty:
             continue
 
-        for idx, row in sub_irbank.iterrows():
-            t0 = row["提出日"]
-            if pd.isna(t0):
+        # 株価データ
+        price_sub = price[price[cn] == code].sort_values(dn).reset_index(drop=True)
+        if price_sub.empty:
+            continue
+        trading_days = price_sub[dn].values
+        closes = price_sub[cl].values
+        opens = price_sub[op].values if op else np.full(len(price_sub), np.nan)
+        mcaps = price_sub[mc].values if mc else np.full(len(price_sub), np.nan)
+
+        # 実績行と予想/修正行を分離
+        actuals  = sub[is_actual_mask.loc[sub.index]].copy()
+        guidance = sub[is_guidance_mask.loc[sub.index]].copy()
+
+        # 全イベント日（提出日）を収集
+        event_dates = sub["提出日"].dropna().unique()
+        event_dates = np.sort(event_dates)
+
+        # 最新の実績を追跡するための状態
+        latest_actual = None
+
+        for evt_date in event_dates:
+            evt_rows = sub[sub["提出日"] == evt_date]
+            actual_on_date  = evt_rows[is_actual_mask.loc[evt_rows.index]]
+            guidance_on_date = evt_rows[is_guidance_mask.loc[evt_rows.index]]
+
+            # 実績があれば更新
+            if not actual_on_date.empty:
+                latest_actual = actual_on_date.iloc[-1]
+
+            if latest_actual is None:
                 continue
 
-            # 翌営業日以降の最初の取引日
-            pos = np.searchsorted(trading_days, np.datetime64(t0 + pd.Timedelta(days=1)), side="left")
+            # 最新ガイダンスを取得（この日以前の最新）
+            past_guidance = guidance[guidance["提出日"] <= evt_date]
+            latest_guidance = past_guidance.iloc[-1] if not past_guidance.empty else None
+
+            # 翌営業日を見つける
+            pos = np.searchsorted(trading_days, np.datetime64(pd.Timestamp(evt_date) + pd.Timedelta(days=1)), side="left")
             if pos >= len(trading_days):
                 continue
 
-            pre_rows.append({
-                "_irbank_idx": idx,
-                "pre_close":   closes[pos],
-                "pre_date":    trading_days[pos],
-                "pre_mcap":    mcaps[pos],
-            })
+            # 1行生成: 実績データ + ガイダンスデータ + 株価データ
+            row_data = latest_actual.to_dict()
 
-            # +5営業日
-            pos5 = pos + 5
-            if pos5 < len(trading_days):
-                post5_rows.append({"_irbank_idx": idx, "post_5d": closes[pos5]})
+            # ガイダンス情報をマージ（列名衝突を避ける）
+            if latest_guidance is not None:
+                for col_name in latest_guidance.index:
+                    if "ガイダンス" in col_name or col_name.endswith("_k"):
+                        row_data[col_name] = latest_guidance[col_name]
+                # ガイダンスの区分・年度情報も保持
+                row_data["ガイダンス区分"] = latest_guidance["区分"]
+                row_data["ガイダンス年度_num"] = latest_guidance.get("年度_num", np.nan)
+                row_data["ガイダンス提出日"] = latest_guidance["提出日"]
 
-            # +20営業日
-            pos20 = pos + 20
-            if pos20 < len(trading_days):
-                post20_rows.append({"_irbank_idx": idx, "post_20d": closes[pos20]})
+            # イベント日を記録（実績提出日ではなくイベント発生日）
+            row_data["イベント日"] = evt_date
+            row_data["イベント種別"] = "実績" if not actual_on_date.empty else "ガイダンス修正"
 
-    pre_df   = pd.DataFrame(pre_rows).set_index("_irbank_idx")
-    post_df  = pd.DataFrame(post5_rows).set_index("_irbank_idx")
-    post20_df = pd.DataFrame(post20_rows).set_index("_irbank_idx")
+            # 株価データ
+            row_data["event_open"]  = opens[pos]
+            row_data["event_close"] = closes[pos]
+            row_data["event_date"]  = trading_days[pos]
+            row_data["event_mcap"]  = mcaps[pos]
 
-    irbank = irbank.join(pre_df,   how="left")
-    irbank = irbank.join(post_df,  how="left")
-    irbank = irbank.join(post20_df, how="left")
-    irbank = irbank.drop(columns=["コード4"])
-    return irbank
+            # 目的変数: 翌営業日の始値→終値リターン
+            if not np.isnan(opens[pos]) and opens[pos] != 0:
+                row_data["target_return"] = closes[pos] / opens[pos] - 1
+            else:
+                row_data["target_return"] = np.nan
+
+            result_rows.append(row_data)
+
+    if not result_rows:
+        print("  [warning] イベント行が1つも生成されませんでした")
+        return pd.DataFrame()
+
+    df_out = pd.DataFrame(result_rows)
+    df_out = df_out.drop(columns=["コード4"], errors="ignore")
+    print(f"  イベント行生成: {len(df_out):,} 行")
+    print(f"  イベント種別: {df_out['イベント種別'].value_counts().to_dict()}")
+    return df_out
 
 
 def compute_eps_sps(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    株数 = 時価総額 / 終値 から EPS・SPS を算出
-    irbank の金額は百万円単位
-    時価総額の単位が 百万円 の場合: 株数 = 時価総額 * 1e6 / 終値
-    時価総額の単位が 円 の場合:     株数 = 時価総額 / 終値
-    → 時価総額を終値で割った結果が 株数として妥当かどうか判断する
-    """
-    if "pre_mcap" not in df.columns or df["pre_mcap"].isna().all():
+    if "event_mcap" not in df.columns or df["event_mcap"].isna().all():
         print("  [warning] 時価総額データなし。EPS/SPS はスキップ。")
         return df
 
-    if "pre_close" not in df.columns or df["pre_close"].isna().all():
+    if "event_close" not in df.columns or df["event_close"].isna().all():
         print("  [warning] 終値データなし。EPS/SPS はスキップ。")
         return df
 
-    # 時価総額の単位判定（中央値で判定）
-    ratio = df["pre_mcap"] / df["pre_close"].replace(0, np.nan)
+    ratio = df["event_mcap"] / df["event_close"].replace(0, np.nan)
     median_ratio = ratio.median()
     print(f"  時価総額/終値 中央値: {median_ratio:,.0f}")
 
     if median_ratio < 1e4:
-        # 小さすぎる → 時価総額が百万円単位
-        shares = df["pre_mcap"] * 1e6 / df["pre_close"].replace(0, np.nan)
+        shares = df["event_mcap"] * 1e6 / df["event_close"].replace(0, np.nan)
         print("  時価総額単位: 百万円 と判定")
     else:
-        # 時価総額が円単位
-        shares = df["pre_mcap"] / df["pre_close"].replace(0, np.nan)
+        shares = df["event_mcap"] / df["event_close"].replace(0, np.nan)
         print("  時価総額単位: 円 と判定")
 
     valid = shares.notna() & (shares > 0)
 
-    # irbank の当期純利益・売上高は百万円単位
     if "当期純利益" in df.columns:
-        df["EPS_計算"] = np.where(valid, df["当期純利益"] * 1e6 / shares, np.nan)
+        df["EPS_計算"] = np.where(valid, pd.to_numeric(df["当期純利益"], errors="coerce") * 1e6 / shares, np.nan)
     if "売上高" in df.columns:
-        df["SPS_計算"] = np.where(valid, df["売上高"] * 1e6 / shares, np.nan)
+        df["SPS_計算"] = np.where(valid, pd.to_numeric(df["売上高"], errors="coerce") * 1e6 / shares, np.nan)
+    if "営業利益" in df.columns:
+        df["OPPS_計算"] = np.where(valid, pd.to_numeric(df["営業利益"], errors="coerce") * 1e6 / shares, np.nan)
     df["株数_推定"] = np.where(valid, shares, np.nan)
 
-    print(f"  EPS/SPS 算出: {valid.sum():,} 行")
+    print(f"  EPS/SPS/OPPS 算出: {valid.sum():,} 行")
     return df
 
 
@@ -256,10 +286,14 @@ def run(
     price_df, col_map = load_price_data(price_path)
     price_df = prepare_price(price_df, col_map)
 
-    print("イベント株価アタッチ中...")
-    df = build_event_prices(irbank, price_df, col_map)
+    print("イベント行生成中...")
+    df = build_event_rows(irbank, price_df, col_map)
     del price_df
     gc.collect()
+
+    if df.empty:
+        print("[error] イベント行が生成されませんでした")
+        return
 
     print("EPS/SPS 計算中...")
     df = compute_eps_sps(df)
@@ -269,10 +303,11 @@ def run(
     print(f"\n保存完了: {output_path}")
     print(f"  {len(df):,} 行 × {len(df.columns)} 列")
 
-    # 目的変数の確認
-    if "pre_close" in df.columns and "post_5d" in df.columns:
-        valid = df["pre_close"].notna() & df["post_5d"].notna()
-        print(f"  株価マッチ率: {valid.mean():.1%} ({valid.sum():,} / {len(df):,})")
+    valid = df["target_return"].notna()
+    print(f"  目的変数(始値→終値)有効率: {valid.mean():.1%} ({valid.sum():,} / {len(df):,})")
+    if valid.any():
+        r = df.loc[valid, "target_return"]
+        print(f"  リターン平均: {r.mean():.4f}, 中央値: {r.median():.4f}")
 
     return df
 
