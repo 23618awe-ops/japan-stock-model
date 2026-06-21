@@ -11,7 +11,20 @@ import unicodedata
 import numpy as np
 import pandas as pd
 
-INPUT_PATH  = "output/irbank_pl.xlsx"
+_LOCAL_CANDIDATES = [
+    "data/irbank_pl_統合.xlsx",
+    "data/irbank_pl.xlsx",
+    "output/irbank_pl.xlsx",
+]
+
+def _find_input():
+    import os
+    for p in _LOCAL_CANDIDATES:
+        if os.path.exists(p):
+            return p
+    return "output/irbank_pl.xlsx"
+
+INPUT_PATH = _find_input()
 OUTPUT_PATH = "output/irbank_features.csv"
 
 

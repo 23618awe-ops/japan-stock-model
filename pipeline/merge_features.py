@@ -22,8 +22,21 @@ import numpy as np
 import pandas as pd
 
 IRBANK_FEATURES = "output/irbank_features.csv"
-PRICE_CSV       = "output/price_clean_valuation.csv"
 OUTPUT_PATH     = "output/features.csv"
+
+_PRICE_CANDIDATES = [
+    "output/price_clean_valuation.csv",
+    "output/prices.csv",
+]
+
+def _find_price():
+    import os
+    for p in _PRICE_CANDIDATES:
+        if os.path.exists(p):
+            return p
+    return "output/price_clean_valuation.csv"
+
+PRICE_CSV = _find_price()
 
 CODE_CANDIDATES  = ["コード", "証券コード", "銘柄コード", "code", "Code", "ticker", "銘柄", "stock_code"]
 DATE_CANDIDATES  = ["日付", "Date", "date", "取引日", "営業日", "trading_date"]
