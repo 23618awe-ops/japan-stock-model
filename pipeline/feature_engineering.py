@@ -99,7 +99,8 @@ def calc_base_metrics(df: pd.DataFrame) -> pd.DataFrame:
 
 
 # ── ガイダンス変化率 ──────────────────────────────────────────────────────
-RATE_COLS = ["売上高", "営業利益", "経常利益", "当期純利益", "EPS", "SPS", "一株営業利益", "営業利益率", "コスト率"]
+# EPS/SPS/一株営業利益はirbank_pl.xlsxに株数データがないため常にNaN → 除外
+RATE_COLS = ["売上高", "営業利益", "経常利益", "当期純利益", "営業利益率", "コスト率"]
 DIFF_COLS = ["営業外寄与", "最終調整寄与"]
 QUARTERS  = ["通期", "2Q"]
 
@@ -597,6 +598,12 @@ def run(input_path: str = INPUT_PATH, output_path: str = OUTPUT_PATH):
     df, df_actual = calc_actual_metrics(df)
 
     print("達成率計算中...")
+    # _単期列をdf_actualからdfにマージしてから達成率計算（単体達成率に必要）
+    tanki_cols = [f"{c}_単期" for c in ["売上高", "営業利益", "経常利益", "当期純利益"]]
+    tanki_avail = [c for c in tanki_cols if c in df_actual.columns]
+    if tanki_avail:
+        merge_key4 = ["コード", "年度_num", "_四半期", "提出日"]
+        df = df.merge(df_actual[merge_key4 + tanki_avail], on=merge_key4, how="left")
     df = calc_achievement(df)
 
     print("ガイダンス符号変化フラグ計算中...")
