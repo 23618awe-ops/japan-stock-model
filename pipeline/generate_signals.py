@@ -15,7 +15,6 @@ OUTPUT_DIR  = "output"
 MODEL_PATH  = f"{OUTPUT_DIR}/model_lgbm.pkl"
 SIGNAL_PATH = f"{OUTPUT_DIR}/signals.csv"
 
-THRESHOLD = 0.5
 TOP_N     = 30    # 上位N件を出力
 
 
@@ -60,7 +59,10 @@ def run():
 
     X = recent[available].astype(float)
     recent["score"]  = model.predict_proba(X)[:, 1]
-    recent["signal"] = (recent["score"] >= THRESHOLD).astype(int)
+    threshold = recent["score"].quantile(0.8)
+    threshold = max(threshold, 0.3)
+    print(f"  シグナル閾値 (上位20%): {threshold:.3f}")
+    recent["signal"] = (recent["score"] >= threshold).astype(int)
 
     # スコア上位を出力
     out = recent[recent["signal"] == 1].sort_values("score", ascending=False)

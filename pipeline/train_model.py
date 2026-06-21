@@ -176,6 +176,15 @@ def train(df: pd.DataFrame):
         print(f"  Test AUC: {test_auc:.4f}")
         print(classification_report(y_test, model.predict(X_test)))
 
+    # スコア分布を確認
+    if len(y_test) > 0:
+        test_scores = model.predict_proba(X_test)[:, 1]
+        pcts = np.percentile(test_scores, [10, 25, 50, 75, 90, 95, 99])
+        print(f"  Test スコア分布: p10={pcts[0]:.3f} p25={pcts[1]:.3f} p50={pcts[2]:.3f} "
+              f"p75={pcts[3]:.3f} p90={pcts[4]:.3f} p95={pcts[5]:.3f} p99={pcts[6]:.3f}")
+        print(f"  スコア>=0.5: {(test_scores >= 0.5).sum()}, >=0.4: {(test_scores >= 0.4).sum()}, "
+              f">=0.3: {(test_scores >= 0.3).sum()}")
+
     # 保存
     with open(MODEL_PATH, "wb") as f:
         pickle.dump({"model": model, "features": features}, f)

@@ -13,8 +13,6 @@ import pandas as pd
 OUTPUT_DIR = "output"
 MODEL_PATH = f"{OUTPUT_DIR}/model_lgbm.pkl"
 
-THRESHOLD   = 0.5   # シグナル閾値
-HOLD_DAYS   = 5     # 保有日数
 TOP_N       = 20    # 上位N銘柄シグナル
 
 
@@ -48,7 +46,10 @@ def run():
 
     X = df[available].astype(float)
     df["score"] = model.predict_proba(X)[:, 1]
-    df["signal"] = (df["score"] >= THRESHOLD).astype(int)
+    threshold = df["score"].quantile(0.8)
+    threshold = max(threshold, 0.3)
+    print(f"  シグナル閾値 (上位20%): {threshold:.3f}")
+    df["signal"] = (df["score"] >= threshold).astype(int)
 
     # リターン計算（始値→終値）
     if "target_return" in df.columns:
