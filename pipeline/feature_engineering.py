@@ -27,6 +27,20 @@ def _find_input():
 INPUT_PATH = _find_input()
 OUTPUT_PATH = "output/irbank_features.csv"
 
+_PRICE_CANDIDATES = [
+    "output/price_clean_valuation.csv",
+    "output/prices.csv",
+]
+
+def _find_price():
+    import os
+    for p in _PRICE_CANDIDATES:
+        if os.path.exists(p):
+            return p
+    return None
+
+PRICE_PATH = _find_price()
+
 
 # ── ロード ──────────────────────────────────────────────────────────────
 def load_csv(path: str, chunksize: int = 50_000) -> pd.DataFrame:
@@ -87,6 +101,88 @@ def preprocess(df: pd.DataFrame) -> pd.DataFrame:
 
     df["_四半期"] = df["区分"].apply(extract_quarter)
     return df.sort_values(["コード", "年度_num", "提出日"]).reset_index(drop=True)
+
+
+# ── 株数マージ ────────────────────────────────────────────────────────────
+def merge_share_count(df: pd.DataFrame, price_path: str | None = None) -> pd.DataFrame:
+    if price_path is None:
+        print("  [skip] 株価データなし → 株数推定スキップ")
+        return df
+
+    print(f"  株価データ読み込み: {price_path}")
+    for enc in ["utf-8-sig", "cp932", "utf-8"]:
+        try:
+            pdf = pd.read_csv(price_path, encoding=enc, dtype=str, low_memory=False)
+            break
+        except UnicodeDecodeError:
+            continue
+    else:
+        print("  [warning] 株価データ読み込み失敗")
+        return df
+
+    pdf.columns = [unicodedata.normalize("NFKC", c).replace(" ", "").replace("　", "").strip() for c in pdf.columns]
+
+    code_cands = ["コード", "証券コード", "code", "Code", "ticker"]
+    date_cands = ["日付", "Date", "date", "取引日"]
+    close_cands = ["終値", "Close", "close", "adj_close"]
+    mcap_cands = ["時価総額", "marketCap", "market_cap", "MarketCap"]
+
+    def _detect(cols, cands):
+        norm = {unicodedata.normalize("NFKC", c).replace(" ", "").strip(): c for c in cols}
+        for ca in cands:
+            nc = unicodedata.normalize("NFKC", ca).replace(" ", "").strip()
+            if nc in norm:
+                return norm[nc]
+        return None
+
+    col_code = _detect(pdf.columns, code_cands)
+    col_date = _detect(pdf.columns, date_cands)
+    col_close = _detect(pdf.columns, close_cands)
+    col_mcap = _detect(pdf.columns, mcap_cands)
+
+    if not all([col_code, col_date, col_close, col_mcap]):
+        print(f"  [warning] 株価データに必要な列が不足 code={col_code} date={col_date} close={col_close} mcap={col_mcap}")
+        return df
+
+    pdf[col_date] = pd.to_datetime(pdf[col_date], errors="coerce")
+    pdf[col_close] = pd.to_numeric(pdf[col_close], errors="coerce")
+    pdf[col_mcap] = pd.to_numeric(pdf[col_mcap], errors="coerce")
+    pdf[col_code] = pdf[col_code].astype(str).str.strip().str.extract(r"(\d{4})", expand=False)
+    pdf = pdf.dropna(subset=[col_code, col_date, col_close, col_mcap])
+    pdf = pdf[pdf[col_close] > 0]
+
+    pdf["_shares"] = pdf[col_mcap] / pdf[col_close]
+    median_ratio = (pdf[col_mcap] / pdf[col_close]).median()
+    if median_ratio < 1e4:
+        pdf["_shares"] = pdf[col_mcap] * 1e6 / pdf[col_close]
+        print("  時価総額単位: 百万円 と判定")
+
+    pdf = pdf[[col_code, col_date, "_shares"]].rename(columns={col_code: "_p_code", col_date: "_p_date"})
+    pdf = pdf.sort_values(["_p_code", "_p_date"])
+
+    df["_code4"] = df["コード"].astype(str).str.strip().str.extract(r"(\d{4})", expand=False)
+
+    results = []
+    for code, sub_df in df.groupby("_code4"):
+        price_sub = pdf[pdf["_p_code"] == code]
+        if price_sub.empty:
+            results.append(sub_df)
+            continue
+        merged = pd.merge_asof(
+            sub_df.sort_values("提出日"),
+            price_sub.rename(columns={"_p_date": "提出日"}),
+            on="提出日",
+            direction="backward",
+        )
+        results.append(merged)
+
+    df = pd.concat(results, ignore_index=True)
+    df["株式数_推定"] = df.pop("_shares") if "_shares" in df.columns else np.nan
+    df = df.drop(columns=["_code4", "_p_code"], errors="ignore")
+
+    valid = df["株式数_推定"].notna().sum()
+    print(f"  株数推定マージ完了: {valid:,} / {len(df):,} 行")
+    return df
 
 
 # ── 基本指標 ──────────────────────────────────────────────────────────────
@@ -596,6 +692,10 @@ def run(input_path: str = INPUT_PATH, output_path: str = OUTPUT_PATH):
 
     print("前処理中...")
     df = preprocess(df)
+
+    print("株数データマージ中...")
+    df = merge_share_count(df, PRICE_PATH)
+
     df = calc_base_metrics(df)
 
     print("ガイダンス変化率計算中...")
